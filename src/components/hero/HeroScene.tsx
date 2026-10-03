@@ -19,6 +19,11 @@ import {
   smoothstep,
   type CloudGeometry,
 } from "@/lib/three/pointCloud";
+import {
+  isHeroSphere,
+  isHeroNotificationWindow,
+} from "@/lib/three/heroNotifications";
+import { LogoMark } from "@/components/ui/Logo";
 import { usePrefersReducedMotion } from "@/lib/usePrefersReducedMotion";
 import { useResolvedTheme } from "@/lib/theme/useResolvedTheme";
 
@@ -260,7 +265,7 @@ export function HeroScene({
       spokeAlpha[i * 2] = 0;
       spokeAlpha[i * 2 + 1] = 1;
       for (let k = 0; k < 3; k++) {
-        spokeCol[(i * 2) * 3 + k] = cloud.colors[i * 3 + k];
+        spokeCol[i * 2 * 3 + k] = cloud.colors[i * 3 + k];
         spokeCol[(i * 2 + 1) * 3 + k] = cloud.colors[i * 3 + k];
       }
     }
@@ -306,7 +311,10 @@ export function HeroScene({
         aspect < 1
           ? Math.min(
               120,
-              (2 * Math.atan(Math.tan((BASE_FOV * Math.PI) / 180 / 2) / aspect) * 180) / Math.PI
+              (2 *
+                Math.atan(Math.tan((BASE_FOV * Math.PI) / 180 / 2) / aspect) *
+                180) /
+                Math.PI,
             )
           : BASE_FOV;
       camera.fov = fov;
@@ -360,7 +368,8 @@ export function HeroScene({
       if (e.pointerId !== activePointer) return;
       dragging = false;
       activePointer = null;
-      if (canvas!.hasPointerCapture(e.pointerId)) canvas!.releasePointerCapture(e.pointerId);
+      if (canvas!.hasPointerCapture(e.pointerId))
+        canvas!.releasePointerCapture(e.pointerId);
     }
 
     canvas.addEventListener("pointerdown", onPointerDown);
@@ -377,7 +386,7 @@ export function HeroScene({
     window.addEventListener("blur", onBlur);
 
     // --- Process bubbles --------------------------------------------------
-    // One bubble at a time, roughly every 5s of VISIBLE ACTIVE time: the
+    // One bubble per settled sphere hold. All timing uses VISIBLE ACTIVE time: the
     // clock is `elapsed`, which only advances while the frame loop runs,
     // so an offscreen or hidden-tab scene accrues no backlog and resumes
     // with a normal gap instead of a burst.
@@ -390,7 +399,7 @@ export function HeroScene({
     const BUBBLE_GAP = 2.0; // hold + gap ~= one bubble per 5s
     const BUBBLE_FADE = 0.25;
     // Mobile omits them rather than covering the scene with a card that
-    // barely fits; reduced motion shows one static label instead.
+    // barely fits; reduced motion keeps the sphere still without popups.
     const bubblesEnabled = !lowQuality && !reducedMotion;
 
     let bubbleIndex = -1;
@@ -405,7 +414,11 @@ export function HeroScene({
       const list = bubblesRef.current;
       if (!list.length) return;
       // Rotate without an immediate repeat.
-      bubbleIndex = list.length === 1 ? 0 : (bubbleIndex + 1 + Math.floor(rng() * (list.length - 1))) % list.length;
+      bubbleIndex =
+        list.length === 1
+          ? 0
+          : (bubbleIndex + 1 + Math.floor(rng() * (list.length - 1))) %
+            list.length;
       // Anchor to a node the scene actually gives meaning to: a green
       // ("colored") node, i.e. one the illustration marks as a signal.
       let tries = 0;
@@ -418,11 +431,24 @@ export function HeroScene({
 
     const projected = new THREE.Vector3();
 
-    function updateBubble(dt: number) {
-      if (!bubblesEnabled || !bubbleEl) return;
-      void dt;
+    function updateBubble() {
+      if (!bubbleEl) return;
+      const sphere = reducedMotion || isHeroSphere(elapsed);
+      anchor!.dataset.scenePhase = sphere ? "sphere" : "network";
+      // A hard gate also protects against a paused CSS fade surviving a morph.
+      bubbleEl.hidden = !bubblesEnabled || !sphere;
+      if (!bubblesEnabled) return;
+      if (!isHeroNotificationWindow(elapsed)) {
+        bubbleVisible = false;
+        bubbleEl.dataset.state = "out";
+        return;
+      }
 
-      if (!bubbleVisible && elapsed >= nextBubbleAt) {
+      if (
+        !bubbleVisible &&
+        elapsed >= nextBubbleAt &&
+        bubblesRef.current.length > 0
+      ) {
         pickBubble();
         bubbleVisible = true;
         bubbleShownAt = elapsed;
@@ -433,7 +459,8 @@ export function HeroScene({
         nextBubbleAt = elapsed + BUBBLE_FADE + BUBBLE_GAP;
       }
 
-      if (!bubbleVisible && elapsed - bubbleShownAt > BUBBLE_HOLD + BUBBLE_FADE) return;
+      if (!bubbleVisible && elapsed - bubbleShownAt > BUBBLE_HOLD + BUBBLE_FADE)
+        return;
 
       // Project the node's CURRENT world position through the live camera
       // into canvas-relative CSS pixels, every frame. The cloud rotates
@@ -441,7 +468,7 @@ export function HeroScene({
       projected.set(
         positions[bubbleNode * 3],
         positions[bubbleNode * 3 + 1],
-        positions[bubbleNode * 3 + 2]
+        positions[bubbleNode * 3 + 2],
       );
       root.localToWorld(projected);
       projected.project(camera);
@@ -450,7 +477,11 @@ export function HeroScene({
       const h = canvas!.clientHeight;
       // Behind the camera, or outside the frame: suppress rather than
       // pin a label to a point that is not really there.
-      if (projected.z > 1 || Math.abs(projected.x) > 1 || Math.abs(projected.y) > 1) {
+      if (
+        projected.z > 1 ||
+        Math.abs(projected.x) > 1 ||
+        Math.abs(projected.y) > 1
+      ) {
         bubbleEl.dataset.state = "out";
         return;
       }
@@ -484,11 +515,11 @@ export function HeroScene({
       const pad = 12;
       const x = Math.min(
         Math.max(px + canvasLeft + 14, pad),
-        Math.max(pad, hostW - bw - pad)
+        Math.max(pad, hostW - bw - pad),
       );
       const y = Math.min(
         Math.max(py + canvasTop - bh - 10, pad),
-        Math.max(pad, hostH - bh - pad)
+        Math.max(pad, hostH - bh - pad),
       );
       bubbleEl.style.transform = `translate3d(${Math.round(x)}px, ${Math.round(y)}px, 0)`;
     }
@@ -522,8 +553,10 @@ export function HeroScene({
         const dy = Math.cos(elapsed * 0.5 + ph * 1.3) * wobble;
         const dz = Math.sin(elapsed * 0.45 + ph * 0.7) * wobble;
 
-        const ex = cloud.disorder[i3] + dx + Math.sin(elapsed * 2.1 + ph) * ELASTIC;
-        const ey = cloud.disorder[i3 + 1] + dy + Math.cos(elapsed * 1.9 + ph) * ELASTIC;
+        const ex =
+          cloud.disorder[i3] + dx + Math.sin(elapsed * 2.1 + ph) * ELASTIC;
+        const ey =
+          cloud.disorder[i3 + 1] + dy + Math.cos(elapsed * 1.9 + ph) * ELASTIC;
         const ez = cloud.disorder[i3 + 2] + dz;
 
         positions[i3] = ex + (cloud.order[i3] - ex) * eased;
@@ -551,16 +584,16 @@ export function HeroScene({
         const a = cloud.edges[e * 2];
         const b = cloud.edges[e * 2 + 1];
         for (let k = 0; k < 3; k++) {
-          edgePos[(e * 2) * 3 + k] = positions[a * 3 + k];
+          edgePos[e * 2 * 3 + k] = positions[a * 3 + k];
           edgePos[(e * 2 + 1) * 3 + k] = positions[b * 3 + k];
         }
       }
       edgeGeo.attributes.position.needsUpdate = true;
 
       for (let i = 0; i < count; i++) {
-        spokePos[(i * 2) * 3] = 0;
-        spokePos[(i * 2) * 3 + 1] = 0;
-        spokePos[(i * 2) * 3 + 2] = 0;
+        spokePos[i * 2 * 3] = 0;
+        spokePos[i * 2 * 3 + 1] = 0;
+        spokePos[i * 2 * 3 + 2] = 0;
         spokePos[(i * 2 + 1) * 3] = positions[i * 3];
         spokePos[(i * 2 + 1) * 3 + 1] = positions[i * 3 + 1];
         spokePos[(i * 2 + 1) * 3 + 2] = positions[i * 3 + 2];
@@ -571,8 +604,10 @@ export function HeroScene({
       // Ceilings tuned against the reference captures: the lines are thin
       // ink hairlines that support the dots, never the dominant element.
       // 0.5 made the graph read as the subject and the nodes as decoration.
-      edgeMat.uniforms.uOpacity.value = 0.3 * (1 - smoothstep(0, 0.65, globalOrder));
-      spokeMat.uniforms.uOpacity.value = 0.32 * smoothstep(0.35, 0.95, globalOrder);
+      edgeMat.uniforms.uOpacity.value =
+        0.3 * (1 - smoothstep(0, 0.65, globalOrder));
+      spokeMat.uniforms.uOpacity.value =
+        0.32 * smoothstep(0.35, 0.95, globalOrder);
 
       // Rotation: auto spin plus a slow sway, with drag inertia on top.
       if (!reducedMotion) {
@@ -588,7 +623,7 @@ export function HeroScene({
         root.rotation.x = rotX + 0.06 * Math.sin(0.035 * elapsed);
       }
 
-      updateBubble(dt);
+      updateBubble();
 
       renderer.render(scene, camera);
     }
@@ -628,7 +663,7 @@ export function HeroScene({
           visible = entry.isIntersecting;
           sync();
         },
-        { threshold: 0 }
+        { threshold: 0 },
       );
       io.observe(anchor);
       document.addEventListener("visibilitychange", sync);
@@ -699,8 +734,8 @@ export function HeroScene({
         // The attribute selector outranks the plain class, so this wins.
         className="absolute inset-0 m-auto flex max-w-[22rem] items-center justify-center text-center font-mono text-[11px] uppercase leading-relaxed tracking-[0.12em] text-muted [&[hidden]]:hidden"
       >
-        A network of the people, processes and tools in a business — resolving into a single
-        connected picture.
+        A network of the people, processes and tools in a business — resolving
+        into a single connected picture.
       </p>
       {/*
        * Process bubble. Purely decorative and `aria-hidden`: a rotating
@@ -714,19 +749,32 @@ export function HeroScene({
       <div
         ref={bubbleRef}
         data-state="out"
+        data-hero-notification=""
+        hidden
         aria-hidden="true"
-        className="pointer-events-none absolute left-0 top-0 z-20 flex max-w-[15rem] items-center gap-2 rounded-md border border-line/70 bg-surface/95 px-3 py-2 text-[12.5px] leading-snug text-ink shadow-[0_6px_20px_-12px_rgba(0,0,0,0.35)] backdrop-blur-sm transition-[opacity,translate] duration-200 ease-modus data-[state=in]:translate-y-0 data-[state=in]:opacity-100 data-[state=out]:translate-y-1 data-[state=out]:opacity-0"
+        className="pointer-events-none absolute left-0 top-0 z-20 flex max-w-[16rem] items-start gap-3 rounded-xl border border-line/70 bg-surface/95 px-3.5 py-3 text-ink shadow-[0_12px_32px_-14px_rgba(0,0,0,0.28),0_2px_6px_rgba(0,0,0,0.04)] backdrop-blur-md transition-[opacity,translate] duration-200 ease-modus data-[state=in]:translate-y-0 data-[state=in]:opacity-100 data-[state=out]:translate-y-1 data-[state=out]:opacity-0 [&[hidden]]:hidden"
       >
-        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-modus" />
-        <span ref={bubbleTextRef} />
+        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-modus/20 bg-modus/5 text-modus">
+          <LogoMark className="h-4 w-4" />
+        </span>
+        <span className="min-w-0">
+          <span className="mb-1 flex items-center gap-2 font-mono text-[9px] uppercase tracking-[0.14em] text-muted">
+            MODUS
+            <span className="h-1 w-1 rounded-full bg-modus" />
+          </span>
+          <span
+            ref={bubbleTextRef}
+            className="block text-[13px] font-medium leading-relaxed"
+          />
+        </span>
       </div>
 
       {/* The canvas is decorative; this is the accessible equivalent. It is
           a static description, not a live region — the signal labels must
           never be announced repeatedly. */}
       <span className="sr-only">
-        A rotating three-dimensional network of points that organises into a sphere, representing
-        the connections MODUS maps across a business.
+        A rotating three-dimensional network of points that organises into a
+        sphere, representing the connections MODUS maps across a business.
         {bubblesNote ? ` ${bubblesNote}` : null}
       </span>
     </div>

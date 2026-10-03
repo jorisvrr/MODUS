@@ -1899,3 +1899,76 @@ Screenshots from the deployment: `e2e-screens/prod-demo-{desktop,mobile}
   session token; it was **not** re-run, because doing so alters
   membership.
 - **MFA remains intentionally deferred.**
+
+## 35. Hero sphere notifications — integrated, 3 October 2026
+
+`HERO-SPHERE-NOTIFICATIONS.patch` is based on `d5ca41c`, which was
+exactly HEAD. `git apply --check` passed and it applied cleanly — four
+hero files, no conflicts, nothing older reapplied. The earlier OS/pricing
+bundle was **not** reapplied.
+
+### What changed
+
+Notifications now appear **only while the animation is fully settled into
+its sphere**, driven by the scene's existing visible-active clock
+(`elapsed`) rather than a second timer or a new loop. On the 13-second
+cycle the sphere hold is **6–10s** and popup eligibility is **6.3–9.7s**,
+so the entrance and exit fades finish before dispersal.
+
+Verified against the real constants rather than taken on trust:
+`CYCLE.disorderHold 3 + morphToOrder 3 = 6` is the hold start, `+
+orderHold 4 = 10` its end, and the module's `margin = 0.3` yields exactly
+the stated 6.3–9.7 window.
+
+The card is a rounded cream surface with a softer shadow, a bare MODUS
+mark, a restrained green accent and a brand eyebrow above the message.
+
+### Verified — 8 hero browser checks
+
+| Check | Result |
+|---|---|
+| A popup becomes visible during the sphere hold, inside the viewport | pass |
+| It never overlaps the headline column | pass |
+| Labels rotate without immediate repeats (in-page MutationObserver) | pass |
+| **Every visible popup is in the `sphere` phase**; `network` is always hidden | pass |
+| Both phases actually observed across the cycle | pass |
+| Reduced motion runs no cycle | pass |
+| Desktop capture is discriminating (`hidden:false`, phase `sphere`, opacity > 0.9) | pass |
+| **Mobile asserts suppression** (`hidden:true`) | pass |
+
+### One check I added
+
+The patch hard-hides the card with the `hidden` attribute. On this card
+that is not sufficient on its own: it carries a `flex` utility, and a
+class-based `display` outranks the user-agent `[hidden] { display: none }`
+rule — the same bug class that once left the WebGL fallback painted over
+a live scene here. The card does declare `[&[hidden]]:hidden`, so it is
+correct; the new test asserts the **computed** value, measuring
+`display: none` and a zero-width box throughout the network phase, so a
+future class change cannot silently undo it.
+
+### Inspected, not assumed
+
+- **Light theme**: cream card `rgba(244,244,231,0.95)` on ink text,
+  sitting over the settled sphere, clear of the headline and both CTAs.
+- **Dark theme**: `rgba(43,38,34,0.95)` with cream text and the green
+  accent. Reaching it needed the `modus_theme` cookie — the theme is
+  resolved server-side, so emulating `prefers-color-scheme` leaves
+  `data-theme="light"` and would have "verified" the wrong thing.
+- Captures: `e2e-screens/hero-bubble-{desktop,mobile}.png`,
+  `hero-notification-dark.png`.
+
+These remain **illustrative process messages**, not real account
+notifications; the accessible description still says so.
+
+### Evidence
+
+`tsc --noEmit` clean · **81 unit tests** · production build compiled ·
+full e2e suite **120 passed, 0 failed, 0 skipped**.
+
+### Scope
+
+No backend, auth, pricing, diagnostic, database or mail change. Not
+pushed, not deployed. `verify-production.mjs` and
+`verify-admin-production.mjs` were not run; no production submission, no
+mail, no membership change.

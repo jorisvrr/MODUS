@@ -17,7 +17,7 @@ import { test, expect, type Page } from "@playwright/test";
  * actually broken: where it ends up on screen.
  */
 
-const BUBBLE = 'div[data-state][aria-hidden="true"]';
+const BUBBLE = "[data-hero-notification]";
 
 async function sample(page: Page) {
   return page.evaluate((sel) => {
@@ -26,29 +26,31 @@ async function sample(page: Page) {
     const b = d.getBoundingClientRect();
     return {
       state: d.dataset.state,
+      hidden: d.hidden,
+      phase: d.parentElement?.dataset.scenePhase,
       opacity: Number(getComputedStyle(d).opacity),
       text: d.textContent?.trim() ?? "",
       left: b.left,
       top: b.top,
       right: b.right,
       bottom: b.bottom,
-      insideViewport: b.left >= 0 && b.right <= window.innerWidth && b.top >= 0 && b.bottom <= window.innerHeight,
+      insideViewport:
+        b.left >= 0 &&
+        b.right <= window.innerWidth &&
+        b.top >= 0 &&
+        b.bottom <= window.innerHeight,
     };
   }, BUBBLE);
 }
 
 test.describe("hero process bubbles", () => {
   test.use({ viewport: { width: 1440, height: 900 } });
-  /*
-   * These watch several ~5s bubble cycles, so they are slow by nature.
-   * Against a deployment the context teardown then overran a 60s budget
-   * and reported a failure although every assertion had passed — the
-   * error was "Tearing down context exceeded the test timeout", not an
-   * assertion. The budget covers the sampling plus teardown now.
-   */
+  // Preserve the deployed suite's allowance for slow context teardown.
   test.setTimeout(120_000);
 
-  test("appear on screen, inside the hero, and are never clipped away", async ({ page }) => {
+  test("appear on screen, inside the hero, and are never clipped away", async ({
+    page,
+  }) => {
     await page.goto("/");
     await page.waitForLoadState("networkidle");
 
@@ -56,13 +58,12 @@ test.describe("hero process bubbles", () => {
     let everVisible = false;
     let everOutside = false;
 
-    // Watch several cycles: hold is 3s with a 2s gap, so this spans more
-    // than one bubble.
+    // First popup waits for the settled sphere, not a free-running timer.
     for (let i = 0; i < 10; i++) {
       await page.waitForTimeout(900);
       const s = await sample(page);
       expect(s, "the bubble element should exist").not.toBeNull();
-      if (s!.state === "in" && s!.opacity > 0.5) {
+      if (!s!.hidden && s!.state === "in" && s!.opacity > 0.5) {
         everVisible = true;
         if (s!.text) seen.push(s!.text);
         // The real defect: positioned outside the viewport and clipped.
@@ -70,75 +71,86 @@ test.describe("hero process bubbles", () => {
       }
     }
 
-    expect(everVisible, "a bubble should become visible within ~9s").toBe(true);
+    expect(
+      everVisible,
+      "a bubble should become visible during the sphere hold",
+    ).toBe(true);
     expect(
       everOutside,
-      "a visible bubble was positioned outside the viewport and would be clipped by the hero"
+      "a visible bubble was positioned outside the viewport and would be clipped by the hero",
     ).toBe(false);
-    expect(seen.length, "a bubble should carry its label text").toBeGreaterThan(0);
+    expect(seen.length, "a bubble should carry its label text").toBeGreaterThan(
+      0,
+    );
   });
 
-  test("the label changes between cycles rather than repeating one", async ({ page }) => {
+  test("the label changes between cycles rather than repeating one", async ({
+    page,
+  }) => {
     await page.goto("/");
     await page.waitForLoadState("networkidle");
 
     /*
-     * Observed from INSIDE the page, not sampled from Node.
-     *
-     * Polling with repeated `page.evaluate` worked locally but failed
-     * against the deployment: each round trip costs network latency, so
-     * the sampler kept missing the ~3s window in which a bubble is
-     * actually up. A probe confirmed production rotates correctly —
-     * "Friction detected" → "Workflow connected" → "Progress reviewed" —
-     * so the fault was in how the test watched, not in what it watched.
-     *
-     * A MutationObserver records every label the element ever shows,
-     * which cannot miss one however slow the connection is.
+     * Condition-based rather than a fixed number of samples. A cycle is
+     * ~5s (3s hold, 2s gap) and the loop only advances while the scene is
+     * visible and the tab is active, so under load fewer cycles complete
+     * in a given wall-clock window — which made a fixed sample count fail
+     * intermittently in a full-suite run while passing in isolation.
+     * `pickBubble` cannot repeat an index consecutively, so two distinct
+     * labels is the right assertion; it just needs long enough to see
+     * two bubbles.
      */
-    await page.evaluate(() => {
+    // Preserve the deployed test's in-page observer: round-trip polling can
+    // miss a short popup on a slow connection.
+    await page.evaluate((selector) => {
       const w = window as unknown as { __bubbleLabels?: Set<string> };
       w.__bubbleLabels = new Set<string>();
-      const el = document.querySelector('div[data-state][aria-hidden="true"]');
+      const el = document.querySelector(selector) as HTMLElement | null;
       if (!el) return;
       const record = () => {
-        const node = el as HTMLElement;
-        if (node.dataset.state === "in") {
-          const text = node.textContent?.trim();
+        if (!el.hidden && el.dataset.state === "in") {
+          const text = el.textContent?.trim();
           if (text) w.__bubbleLabels!.add(text);
         }
       };
       record();
       new MutationObserver(record).observe(el, {
         attributes: true,
-        attributeFilter: ["data-state"],
+        attributeFilter: ["data-state", "hidden"],
         childList: true,
         subtree: true,
         characterData: true,
       });
-    });
-
+    }, BUBBLE);
     await expect
       .poll(
-        async () =>
+        () =>
           page.evaluate(
-            () => (window as unknown as { __bubbleLabels?: Set<string> }).__bubbleLabels?.size ?? 0
+            () =>
+              (window as unknown as { __bubbleLabels?: Set<string> })
+                .__bubbleLabels?.size ?? 0,
           ),
-        { timeout: 45_000, intervals: [1000] }
+        { timeout: 45_000, intervals: [1000] },
       )
       .toBeGreaterThan(1);
   });
 
-  test("they sit over the scene, not over the headline column", async ({ page }) => {
+  test("they sit over the scene, not over the headline column", async ({
+    page,
+  }) => {
     await page.goto("/");
     await page.waitForLoadState("networkidle");
 
-    const heading = await page.getByRole("heading", { level: 1 }).first().boundingBox();
+    const heading = await page
+      .getByRole("heading", { level: 1 })
+      .first()
+      .boundingBox();
     expect(heading).not.toBeNull();
 
     for (let i = 0; i < 8; i++) {
       await page.waitForTimeout(900);
       const s = await sample(page);
-      if (s?.state !== "in" || s.opacity <= 0.5) continue;
+      if (s?.hidden || s?.state !== "in" || s.opacity <= 0.5) continue;
       // The scene is to the right of the copy; a bubble must not land on
       // the headline.
       const overlapsHeading =
@@ -146,8 +158,69 @@ test.describe("hero process bubbles", () => {
         s.right > heading!.x &&
         s.top < heading!.y + heading!.height &&
         s.bottom > heading!.y;
-      expect(overlapsHeading, `bubble overlapped the headline at ${s.left},${s.top}`).toBe(false);
+      expect(
+        overlapsHeading,
+        `bubble overlapped the headline at ${s.left},${s.top}`,
+      ).toBe(false);
     }
+  });
+
+  test("popups stay inside the sphere hold and vanish before dispersal", async ({
+    page,
+  }) => {
+    await page.goto("/");
+    const phases = new Set<string>();
+    let sawPopup = false;
+    for (let i = 0; i < 110; i++) {
+      const s = await sample(page);
+      if (s?.phase) phases.add(s.phase);
+      if (s && !s.hidden && s.opacity > 0.05) {
+        sawPopup = true;
+        expect(
+          s.phase,
+          "an actually visible popup must be in the sphere phase",
+        ).toBe("sphere");
+      }
+      if (s?.phase === "network") expect(s.hidden).toBe(true);
+      await page.waitForTimeout(150);
+    }
+    expect(sawPopup).toBe(true);
+    expect([...phases].sort()).toEqual(["network", "sphere"]);
+  });
+
+  test("the hard hide really hides: display:none, not just the attribute", async ({
+    page,
+  }) => {
+    /*
+     * `hidden` on its own is not enough here. The card carries a `flex`
+     * utility, and a class-based `display` outranks the user-agent
+     * `[hidden] { display: none }` rule — the same bug class that once
+     * left the WebGL fallback painted over a live scene in this project.
+     * The card declares `[&[hidden]]:hidden` for exactly this reason, so
+     * the computed value is what gets asserted, not the attribute.
+     */
+    await page.goto("/");
+    await page.waitForLoadState("networkidle");
+
+    let sawNetwork = false;
+    for (let i = 0; i < 110; i++) {
+      const s = await page.evaluate((sel) => {
+        const d = document.querySelector(sel) as HTMLElement | null;
+        if (!d) return null;
+        return {
+          phase: d.parentElement?.dataset.scenePhase,
+          display: getComputedStyle(d).display,
+          width: d.getBoundingClientRect().width,
+        };
+      }, BUBBLE);
+      if (s?.phase === "network") {
+        expect(s.display, "a hidden card must compute to display:none").toBe("none");
+        expect(s.width, "a hidden card must occupy no box").toBe(0);
+        sawNetwork = true;
+      }
+      await page.waitForTimeout(150);
+    }
+    expect(sawNetwork, "the network phase should have been observed").toBe(true);
   });
 
   test("reduced motion does not run the bubble cycle", async ({ page }) => {
@@ -165,16 +238,24 @@ for (const [name, viewport] of [
   ["desktop", { width: 1440, height: 900 }],
   ["mobile", { width: 390, height: 844 }],
 ] as const) {
-  test(`capture a visible bubble at ${name}`, async ({ page }) => {
+  test(`capture the updated hero at ${name}`, async ({ page }) => {
     await page.setViewportSize(viewport);
     await page.goto("/");
     await page.waitForLoadState("networkidle");
     // Wait for a cycle where the bubble is actually up, so the capture
     // shows the thing being claimed rather than the gap between bubbles.
-    for (let i = 0; i < 12; i++) {
+    for (let i = 0; i < 28; i++) {
       const s = await sample(page);
-      if (s?.state === "in" && s.opacity > 0.9) break;
+      if (!s?.hidden && s?.state === "in" && s.opacity > 0.9) break;
       await page.waitForTimeout(500);
+    }
+    const final = await sample(page);
+    if (name === "desktop") {
+      expect(final?.hidden).toBe(false);
+      expect(final?.phase).toBe("sphere");
+      expect(final?.opacity).toBeGreaterThan(0.9);
+    } else {
+      expect(final?.hidden).toBe(true);
     }
     await page.screenshot({ path: `e2e-screens/hero-bubble-${name}.png` });
   });
