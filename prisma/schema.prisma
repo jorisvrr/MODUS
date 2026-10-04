@@ -61,8 +61,26 @@ model Diagnostic {
   customerChannels        String // JSON array
   enquiryHandling          String // JSON array
   adminWorkload            String
-  processStandardization   Int
+
+  /*
+   * The two operations questions were rewritten in October 2026 from a
+   * 1-5 scale and a Low/Medium/High judgement into plain categorical
+   * answers, one of which is explicitly "not sure / not applicable".
+   *
+   * The legacy columns are KEPT so historical records stay readable with
+   * the meaning they were recorded under — a 3 on the old scale still
+   * means what it meant. `processStandardization` becomes nullable
+   * because the new answer set includes an honest "unknown", and there
+   * is no number on a 1-5 scale that means "not answered": writing one
+   * would be read downstream as low standardization, which is a
+   * negative conclusion the visitor never gave.
+   */
+  processStandardization   Int?
   keyEmployeeDependency    String
+
+  /** Verbatim new answers. Source of truth for records from Oct 2026 on. */
+  taskConsistency          String?
+  absenceCoverage          String?
 
   // Systems
   systems              String // JSON array

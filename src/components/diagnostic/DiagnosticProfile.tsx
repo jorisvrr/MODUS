@@ -1,6 +1,7 @@
 "use client";
 
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
+import { isUnknownAbsenceCoverage } from "@/lib/diagnostic/operationsMapping";
 import { useState } from "react";
 import { DiagnosticScene } from "@/components/diagnostic/DiagnosticScene";
 import { SignalCard } from "@/components/diagnostic/SignalCard";
@@ -67,7 +68,14 @@ export function DiagnosticProfile({
   if (answers.primaryPain) facts.push({ label: t.factPrimaryFriction, value: answers.primaryPain });
   else if (answers.friction.length > 0)
     facts.push({ label: t.factFriction, value: answers.friction[0] });
-  if (answers.dependency) facts.push({ label: t.factDependency, value: answers.dependency });
+  /*
+   * Only when the visitor actually told us. "Not sure" and "I work
+   * alone" are deliberately not summarised as a fact about the business:
+   * they say what the visitor knows, not what is true of their work.
+   */
+  if (answers.absenceCoverage && !isUnknownAbsenceCoverage(answers.absenceCoverage)) {
+    facts.push({ label: t.factDependency, value: answers.absenceCoverage });
+  }
 
   const fade = reduced ? { duration: 0 } : { duration: 0.3, ease: [0.16, 1, 0.3, 1] as const };
 

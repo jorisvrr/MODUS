@@ -113,8 +113,11 @@ export async function downloadDiagnosticPdf(
   fieldRow("Reach channels", answers.reachChannels.join(", "));
   fieldRow("Enquiry handling", answers.enquiryHandling.join(", "));
   fieldRow("Admin workload", answers.adminHours);
-  fieldRow("Process standardization", `${answers.processStandardization} / 5`);
-  fieldRow("Key-person dependency", answers.dependency);
+  // The visitor's own words, not a derived number. A record from before
+  // October 2026 has neither field and shows the legacy values instead,
+  // which is handled where historical records are rendered.
+  fieldRow("Same steps for recurring tasks", answers.taskConsistency || "Not answered");
+  fieldRow("A colleague can take over", answers.absenceCoverage || "Not answered");
   divider();
 
   // Systems

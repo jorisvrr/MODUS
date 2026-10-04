@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { withLegacyOperations } from "@/lib/diagnostic/operationsMapping";
 import Link from "next/link";
 import { Download } from "lucide-react";
 import { LayoutGroup } from "motion/react";
@@ -35,7 +36,7 @@ export function ResultView({ answers }: { answers: DiagnosticAnswers }) {
   const indicators = buildProfileIndicators(answers, locale);
   const signals = buildSignals(answers, locale);
   const focusAreas = buildFocusAreas(answers, locale);
-  const estimate = calculateEngagementEstimate(answers);
+  const estimate = calculateEngagementEstimate(withLegacyOperations(answers));
   const te = t.estimate;
   const levelLabel = { low: te.levelLow, moderate: te.levelModerate, high: te.levelHigh };
   const scopeCeiling = PRICING_CONFIG.monthly.bands[4].estimateMax; // "extensive" band's top, the ceiling before manual scope

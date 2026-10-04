@@ -31,6 +31,12 @@ export function getAdminHoursOptions(locale: Locale) {
 export function getDependencyLevels(locale: Locale) {
   return dictFor(locale).diagnosticQuestions.dependencyLevels;
 }
+export function getTaskConsistencyOptions(locale: Locale) {
+  return dictFor(locale).diagnosticQuestions.taskConsistencyOptions;
+}
+export function getAbsenceCoverageOptions(locale: Locale) {
+  return dictFor(locale).diagnosticQuestions.absenceCoverageOptions;
+}
 export function getSystemOptions(locale: Locale) {
   return dictFor(locale).diagnosticQuestions.systemOptions;
 }

@@ -1,6 +1,5 @@
-import { execSync } from "node:child_process";
-import path from "node:path";
 import { test, expect, type Page } from "@playwright/test";
+import { PrismaClient } from "@prisma/client";
 import { holdToSubmit } from "./holdToSubmit";
 
 const TEST_EMAIL = "ada@playwright-qa.dev";
@@ -11,18 +10,38 @@ async function clickFirstOptionNear(page: Page, headingText: string) {
   await heading.locator("xpath=following-sibling::div[1]").locator("button").first().click();
 }
 
-// This flow submits a real row to the local dev database (there's no
-// staging/mock backend to point at instead), so clean it up afterward —
-// scoped tightly to this test's own distinctive email, never a broad delete.
-test.afterEach(() => {
-  const dbPath = path.join(__dirname, "..", "prisma", "dev.db");
+/*
+ * This flow submits a real row to the local development database, so it
+ * is cleaned up afterwards — scoped tightly to these two distinctive
+ * emails, never a broad delete.
+ *
+ * It used to shell out to `sqlite3 prisma/dev.db`, which has done
+ * nothing since the move to Postgres: the file is gone, the command
+ * failed, and the `catch` swallowed it. The rows therefore accumulated,
+ * and because the API refuses a second submission from the same address
+ * within 60 seconds, re-running this spec inside a minute put it on the
+ * submit-error screen and the failure surfaced as "the estimate never
+ * appeared" — nothing to do with the estimate.
+ *
+ * Cleaning up BEFORE each test as well as after means a leftover row
+ * from an interrupted run cannot fail the next one.
+ */
+const prisma = new PrismaClient();
+const TEST_EMAILS = [TEST_EMAIL, OPTIONAL_FIELD_TEST_EMAIL];
+
+async function removeTestRows() {
   try {
-    execSync(
-      `sqlite3 "${dbPath}" "DELETE FROM Diagnostic WHERE email='${TEST_EMAIL}' OR email='${OPTIONAL_FIELD_TEST_EMAIL}';"`
-    );
+    await prisma.diagnostic.deleteMany({ where: { email: { in: TEST_EMAILS } } });
   } catch {
-    // sqlite3 CLI or dev.db not present — nothing to clean up.
+    // The suite can run without a reachable database; the assertions
+    // below will report that far more clearly than this hook would.
   }
+}
+
+test.beforeEach(removeTestRows);
+test.afterEach(removeTestRows);
+test.afterAll(async () => {
+  await prisma.$disconnect();
 });
 
 test("full diagnostic happy path: intro -> review -> submit -> estimate", async ({ page }) => {

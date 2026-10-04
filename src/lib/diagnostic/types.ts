@@ -9,8 +9,15 @@ export type DiagnosticAnswers = {
   reachChannels: string[];
   enquiryHandling: string[];
   adminHours: string;
-  processStandardization: number; // 1-5
-  dependency: "Low" | "Medium" | "High" | "";
+  /*
+   * The two operations answers, rewritten October 2026 into plain
+   * categorical choices. They are the source of truth for new
+   * submissions; the legacy numeric/level fields are derived from them
+   * on the server by an explicit mapping, and are left unset where the
+   * visitor said they do not know.
+   */
+  taskConsistency: string;
+  absenceCoverage: string;
 
   systems: string[];
   specificTools: string;
@@ -48,8 +55,8 @@ export const emptyAnswers: DiagnosticAnswers = {
   reachChannels: [],
   enquiryHandling: [],
   adminHours: "",
-  processStandardization: 3,
-  dependency: "",
+  taskConsistency: "",
+  absenceCoverage: "",
 
   systems: [],
   specificTools: "",

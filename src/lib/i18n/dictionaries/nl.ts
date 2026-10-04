@@ -1,4 +1,8 @@
 import type { ChatRule } from "@/lib/chatbot";
+import {
+  TASK_CONSISTENCY_OPTIONS,
+  ABSENCE_COVERAGE_OPTIONS,
+} from "@/lib/diagnostic/operationsOptions";
 import type { Dictionary } from "./en";
 
 export const nl: Dictionary = {
@@ -261,6 +265,8 @@ export const nl: Dictionary = {
     ],
     adminHoursOptions: ["Heel weinig", "Een paar uur", "5–10 uur", "10–25 uur", "25+ uur", "Niet zeker"],
     dependencyLevels: ["Laag", "Gemiddeld", "Hoog"],
+    taskConsistencyOptions: TASK_CONSISTENCY_OPTIONS.nl,
+    absenceCoverageOptions: ABSENCE_COVERAGE_OPTIONS.nl,
     systemOptions: [
       "CRM",
       "Boekhouding",
@@ -386,11 +392,15 @@ export const nl: Dictionary = {
       selectAll: "Selecteer alles wat van toepassing is.",
       enquiryTitle: "Hoe worden vragen afgehandeld?",
       adminTitle: "Hoeveel terugkerend administratief werk is er elke week?",
-      standardizationTitle: "Hoe gestandaardiseerd zijn je processen?",
-      maturityLow: "Grotendeels geïmproviseerd",
-      maturityHigh: "Sterk gestandaardiseerd",
-      maturityLabels: ["Grotendeels geïmproviseerd", "", "Enige structuur", "", "Sterk gestandaardiseerd"],
-      dependencyTitle: "Hoe afhankelijk is het bedrijf van specifieke medewerkers die weten “hoe dingen werken”?",
+      taskConsistencyTitle: "Volgt je team dezelfde stappen bij terugkerende taken?",
+      taskConsistencyHelper:
+        "Bijvoorbeeld: een offerte opstellen, een klus inplannen of een klant opvolgen.",
+      absenceCoverageTitle: "Als iemand er niet is, kan een collega het werk overnemen?",
+      absenceCoverageHelper:
+        "Denk aan of de collega de informatie kan vinden en weet wat te doen.",
+      legacyStandardizationTitle: "Hoe gestandaardiseerd zijn je processen?",
+      legacyDependencyTitle:
+        "Hoe afhankelijk is het bedrijf van specifieke medewerkers die weten “hoe dingen werken”?",
     },
     systems: {
       systemsTitle: "Wat draait je bedrijf vandaag?",

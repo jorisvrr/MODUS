@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { isUnknownAbsenceCoverage } from "@/lib/diagnostic/operationsMapping";
 import { motion, AnimatePresence, LayoutGroup } from "motion/react";
 import { LogoMark } from "@/components/ui/Logo";
 import { SystemMap } from "@/components/diagnostic/SystemMap";
@@ -42,7 +43,14 @@ export function ProfilePanel({
   if (answers.adminHours) facts.push({ label: t.factManualWork, value: answers.adminHours });
   if (answers.primaryPain) facts.push({ label: t.factPrimaryFriction, value: answers.primaryPain });
   else if (answers.friction.length > 0) facts.push({ label: t.factFriction, value: answers.friction[0] });
-  if (answers.dependency) facts.push({ label: t.factDependency, value: answers.dependency });
+  /*
+   * Only when the visitor actually told us. "Not sure" and "I work
+   * alone" are deliberately not summarised as a fact about the business:
+   * they say what the visitor knows, not what is true of their work.
+   */
+  if (answers.absenceCoverage && !isUnknownAbsenceCoverage(answers.absenceCoverage)) {
+    facts.push({ label: t.factDependency, value: answers.absenceCoverage });
+  }
 
   return (
     <LayoutGroup>

@@ -21,7 +21,11 @@ export type EngagementEstimateInput = {
   spreadsheetDependency: string;
   adminHours: string;
   dependency: "Low" | "Medium" | "High" | "";
-  processStandardization: number; // 1-5
+  /**
+   * 1–5, or null when the visitor answered "not sure / not applicable".
+   * Null is scored as no signal — see `operationalComplexityScore`.
+   */
+  processStandardization: number | null;
   friction: string[];
   frequency: string;
   impact: string[];

@@ -5,6 +5,10 @@ import { after } from "next/server";
 import { dispatchPending, enqueueSubmissionNotification } from "@/lib/notifications/outbox";
 import { SITE_ORIGIN } from "@/lib/legal/site";
 import {
+  legacyDependency,
+  legacyStandardization,
+} from "@/lib/diagnostic/operationsMapping";
+import {
   companyNameSchema,
   emailSchema,
   nameSchema,
@@ -34,8 +38,14 @@ const submissionSchema = z.object({
   reachChannels: stringArray,
   enquiryHandling: stringArray,
   adminHours: shortTextSchema(30),
-  processStandardization: z.number().int().min(1).max(5),
-  dependency: z.enum(["Low", "Medium", "High", ""]),
+  /*
+   * The October 2026 operations answers, accepted as the visitor's own
+   * text. The legacy numeric/level fields are DERIVED on the server
+   * (see operationsMapping) rather than accepted from the client, so a
+   * crafted request cannot post a score that no answer supports.
+   */
+  taskConsistency: z.string().max(120).optional().default(""),
+  absenceCoverage: z.string().max(120).optional().default(""),
 
   systems: stringArray,
   specificTools: shortTextSchema(200).optional().default(""),
@@ -152,8 +162,8 @@ export async function POST(request: NextRequest) {
     connectionLevel: data.connectionLevel,
     spreadsheetDependency: data.spreadsheetDependency,
     adminHours: data.adminHours,
-    dependency: data.dependency,
-    processStandardization: data.processStandardization,
+    dependency: legacyDependency(data.absenceCoverage),
+    processStandardization: legacyStandardization(data.taskConsistency),
     friction: data.friction,
     frequency: data.frequency,
     impact: data.impact,
@@ -173,8 +183,15 @@ export async function POST(request: NextRequest) {
       customerChannels: JSON.stringify(data.reachChannels),
       enquiryHandling: JSON.stringify(data.enquiryHandling),
       adminWorkload: data.adminHours,
-      processStandardization: data.processStandardization,
-      keyEmployeeDependency: data.dependency,
+      /*
+       * Verbatim answers are the record; the legacy columns are the
+       * explicit mapping, left unset where the visitor said they do not
+       * know. Historical rows keep the values they were saved with.
+       */
+      taskConsistency: data.taskConsistency,
+      absenceCoverage: data.absenceCoverage,
+      processStandardization: legacyStandardization(data.taskConsistency),
+      keyEmployeeDependency: legacyDependency(data.absenceCoverage),
 
       systems: JSON.stringify(data.systems),
       specificTools: data.specificTools || null,

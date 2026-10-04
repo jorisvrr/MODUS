@@ -142,7 +142,15 @@ function keyPersonDependencyScore(dependency: EngagementEstimateInput["dependenc
 }
 
 function operationalComplexityScore(input: EngagementEstimateInput): number {
-  const lowStandardizationBonus = input.processStandardization <= 1 ? 1 : 0;
+  /*
+   * `null` means the visitor said they do not know, or that the question
+   * does not apply. That is not evidence of low consistency, so it adds
+   * nothing. Written as an explicit null check rather than relying on
+   * coercion, because `null <= 1` is true in JavaScript and would have
+   * quietly priced an unknown as a complexity signal.
+   */
+  const lowStandardizationBonus =
+    input.processStandardization !== null && input.processStandardization <= 1 ? 1 : 0;
   const raw =
     adminHoursScore(input.adminHours) +
     keyPersonDependencyScore(input.dependency) +

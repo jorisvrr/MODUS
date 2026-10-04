@@ -332,13 +332,29 @@ export function DiagnosticDetailView({
               value={diagnostic.enquiryHandling.join(", ")}
             />
             <Field label="Admin workload" value={diagnostic.adminWorkload} />
+            {/*
+              * New records carry the visitor's own answer. Records from
+              * before October 2026 have only the old 1-5 rating, and are
+              * shown as that, under the wording they were asked — a 3
+              * still means what it meant when it was recorded.
+              */}
             <Field
-              label="Process standardization"
-              value={`${diagnostic.processStandardization} / 5`}
+              label="Same steps for recurring tasks"
+              value={
+                diagnostic.taskConsistency ||
+                (diagnostic.processStandardization != null
+                  ? `${diagnostic.processStandardization} / 5 (asked as “How standardized are your processes?”)`
+                  : "Not answered")
+              }
             />
             <Field
-              label="Key-employee dependency"
-              value={diagnostic.keyEmployeeDependency}
+              label="A colleague can take over"
+              value={
+                diagnostic.absenceCoverage ||
+                (diagnostic.keyEmployeeDependency
+                  ? `${diagnostic.keyEmployeeDependency} (asked as “How dependent is the business on specific employees?”)`
+                  : "Not answered")
+              }
             />
           </Section>
 

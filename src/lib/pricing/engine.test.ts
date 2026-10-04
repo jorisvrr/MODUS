@@ -288,3 +288,26 @@ describe("recomputeForScopeOverride", () => {
     expect(result.estimatedMax).toBeLessThanOrEqual(2000);
   });
 });
+
+describe("an unknown operations answer is not priced as a problem", () => {
+  it("adds no complexity when standardization is unknown", () => {
+    // `null <= 1` is true in JavaScript, so without an explicit null
+    // check an unanswered question would have been priced as the worst
+    // possible answer.
+    const unknown = calculateEngagementEstimate(
+      withInput({ processStandardization: null })
+    );
+    const lowest = calculateEngagementEstimate(withInput({ processStandardization: 1 }));
+    expect(unknown.estimatedMin).toBeLessThanOrEqual(lowest.estimatedMin);
+    const neutral = calculateEngagementEstimate(withInput({ processStandardization: 3 }));
+    expect(unknown.estimatedMin).toBe(neutral.estimatedMin);
+    expect(unknown.estimatedMax).toBe(neutral.estimatedMax);
+  });
+
+  it("adds no complexity when the visitor works alone", () => {
+    const alone = calculateEngagementEstimate(withInput({ dependency: "" }));
+    const low = calculateEngagementEstimate(withInput({ dependency: "Low" }));
+    expect(alone.estimatedMin).toBe(low.estimatedMin);
+    expect(alone.estimatedMax).toBe(low.estimatedMax);
+  });
+});

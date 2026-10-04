@@ -1,4 +1,5 @@
 import type { DiagnosticAnswers, ProfileIndicator, Signal } from "./types";
+import { legacyDependency } from "./operationsMapping";
 import type { Locale } from "@/lib/i18n/config";
 import { dictFor } from "@/lib/i18n/context";
 import { pick } from "./questions";
@@ -61,7 +62,9 @@ export function buildSignals(a: DiagnosticAnswers, locale: Locale = "en"): Signa
     });
   }
 
-  if (a.dependency === pick("dependencyLevels", "High", locale)) {
+  // Derived from "can a colleague take over?" — see operationsMapping.
+  // "I work alone" maps to "", so it never raises this signal.
+  if (legacyDependency(a.absenceCoverage) === "High") {
     signals.push({
       id: "key-person-risk",
       headline: dict.keyPersonRisk.headline,
@@ -122,8 +125,7 @@ export function buildProfileIndicators(a: DiagnosticAnswers, locale: Locale = "e
   const customAutomation = pick("automationUsage", "Custom automation", locale);
   const aiIntegrated = pick("automationUsage", "AI integrated into workflows", locale);
   const noAutomation = pick("automationUsage", "No", locale);
-  const dependencyHigh = pick("dependencyLevels", "High", locale);
-  const dependencyMedium = pick("dependencyLevels", "Medium", locale);
+  const dependency = legacyDependency(a.absenceCoverage);
 
   const fragmentation: ProfileIndicator["tone"] =
     a.connectionLevel === mostlyManual ? "high" : a.connectionLevel === someConnections ? "moderate" : "low";
@@ -136,7 +138,7 @@ export function buildProfileIndicators(a: DiagnosticAnswers, locale: Locale = "e
         : "early";
 
   const dependencyTone: ProfileIndicator["tone"] =
-    a.dependency === dependencyHigh ? "high" : a.dependency === dependencyMedium ? "moderate" : "low";
+    dependency === "High" ? "high" : dependency === "Medium" ? "moderate" : "low";
 
   const visibility: ProfileIndicator["tone"] = a.connectionLevel === mostlyConnected ? "moderate" : "low";
 

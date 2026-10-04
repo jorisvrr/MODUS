@@ -1,4 +1,8 @@
 import type { ChatRule } from "@/lib/chatbot";
+import {
+  TASK_CONSISTENCY_OPTIONS,
+  ABSENCE_COVERAGE_OPTIONS,
+} from "@/lib/diagnostic/operationsOptions";
 
 export const en = {
   common: {
@@ -279,6 +283,8 @@ export const en = {
     ],
     adminHoursOptions: ["Very little", "A few hours", "5–10 hours", "10–25 hours", "25+ hours", "Unsure"],
     dependencyLevels: ["Low", "Medium", "High"],
+    taskConsistencyOptions: TASK_CONSISTENCY_OPTIONS.en,
+    absenceCoverageOptions: ABSENCE_COVERAGE_OPTIONS.en,
     systemOptions: [
       "CRM",
       "Accounting",
@@ -407,11 +413,25 @@ export const en = {
       selectAll: "Select all that apply.",
       enquiryTitle: "How are enquiries handled?",
       adminTitle: "How much repetitive administrative work happens each week?",
-      standardizationTitle: "How standardized are your processes?",
-      maturityLow: "Mostly improvised",
-      maturityHigh: "Highly standardized",
-      maturityLabels: ["Mostly improvised", "", "Some structure", "", "Highly standardized"],
-      dependencyTitle: "How dependent is the business on specific employees knowing “how things work”?",
+      /*
+       * Rewritten October 2026. The old pair asked the visitor to rate
+       * their own "process standardization" on a 1-5 scale and to judge
+       * how "dependent" the business is — both ask for a self-assessment
+       * in our vocabulary. These ask about something the visitor can
+       * simply observe about their week.
+       *
+       * The legacy keys are kept so historical records can still be
+       * rendered with the wording they were answered under.
+       */
+      taskConsistencyTitle: "Does your team follow the same steps for recurring tasks?",
+      taskConsistencyHelper:
+        "For example: preparing a quote, booking a job or following up with a customer.",
+      absenceCoverageTitle: "If someone is away, can a colleague take over their work?",
+      absenceCoverageHelper:
+        "Think about whether the colleague can find the information and knows what to do.",
+      legacyStandardizationTitle: "How standardized are your processes?",
+      legacyDependencyTitle:
+        "How dependent is the business on specific employees knowing “how things work”?",
     },
     systems: {
       systemsTitle: "What runs your business today?",

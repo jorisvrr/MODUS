@@ -1,9 +1,14 @@
 "use client";
 
-import { motion } from "motion/react";
 import { OptionGrid } from "@/components/diagnostic/OptionGrid";
 import { toggleInArray } from "@/lib/diagnostic/utils";
-import { getReachChannels, getEnquiryHandling, getAdminHoursOptions, getDependencyLevels } from "@/lib/diagnostic/questions";
+import {
+  getReachChannels,
+  getEnquiryHandling,
+  getAdminHoursOptions,
+  getTaskConsistencyOptions,
+  getAbsenceCoverageOptions,
+} from "@/lib/diagnostic/questions";
 import type { DiagnosticAnswers } from "@/lib/diagnostic/types";
 import { useDict, useLocale } from "@/lib/i18n/context";
 
@@ -20,8 +25,8 @@ export function StepOperations({
   const reachChannels = getReachChannels(locale);
   const enquiryHandling = getEnquiryHandling(locale);
   const adminHoursOptions = getAdminHoursOptions(locale);
-  const dependencyLevels = getDependencyLevels(locale);
-  const MATURITY_LABELS = t.maturityLabels;
+  const taskConsistencyOptions = getTaskConsistencyOptions(locale);
+  const absenceCoverageOptions = getAbsenceCoverageOptions(locale);
 
   return (
     <div className="space-y-8">
@@ -63,51 +68,27 @@ export function StepOperations({
       </div>
 
       <div>
-        <p className="text-[14px] font-medium text-ink">{t.standardizationTitle}</p>
-        <div className="mt-4 flex items-center gap-2">
-          {[1, 2, 3, 4, 5].map((n) => (
-            <button
-              key={n}
-              type="button"
-              onClick={() => update("processStandardization", n)}
-              className="relative flex h-9 flex-1 items-center justify-center rounded-sm border border-line"
-            >
-              {answers.processStandardization === n && (
-                <motion.span
-                  layoutId="maturity-fill"
-                  transition={{ type: "spring", stiffness: 400, damping: 32 }}
-                  className="absolute inset-0 rounded-sm bg-modus"
-                />
-              )}
-              <span
-                className={`relative z-10 font-mono text-[12px] ${
-                  answers.processStandardization === n ? "text-paper" : "text-muted"
-                }`}
-              >
-                {n}
-              </span>
-            </button>
-          ))}
+        <p className="text-[14px] font-medium text-ink">{t.taskConsistencyTitle}</p>
+        <p className="mt-1 text-[12.5px] text-muted">{t.taskConsistencyHelper}</p>
+        <div className="mt-3">
+          <OptionGrid
+            options={[...taskConsistencyOptions]}
+            selected={answers.taskConsistency ? [answers.taskConsistency] : []}
+            onToggle={(v) => update("taskConsistency", v)}
+            columns={2}
+          />
         </div>
-        <div className="mt-2 flex justify-between font-mono text-[10px] uppercase tracking-[0.06em] text-muted">
-          <span>{t.maturityLow}</span>
-          <span>{t.maturityHigh}</span>
-        </div>
-        {MATURITY_LABELS[answers.processStandardization - 1] && (
-          <p className="mt-2 text-[12.5px] text-graphite">
-            {MATURITY_LABELS[answers.processStandardization - 1]}
-          </p>
-        )}
       </div>
 
       <div>
-        <p className="text-[14px] font-medium text-ink">{t.dependencyTitle}</p>
+        <p className="text-[14px] font-medium text-ink">{t.absenceCoverageTitle}</p>
+        <p className="mt-1 text-[12.5px] text-muted">{t.absenceCoverageHelper}</p>
         <div className="mt-3">
           <OptionGrid
-            options={[...dependencyLevels]}
-            selected={answers.dependency ? [answers.dependency] : []}
-            onToggle={(v) => update("dependency", v as DiagnosticAnswers["dependency"])}
-            columns={3}
+            options={[...absenceCoverageOptions]}
+            selected={answers.absenceCoverage ? [answers.absenceCoverage] : []}
+            onToggle={(v) => update("absenceCoverage", v)}
+            columns={2}
           />
         </div>
       </div>
