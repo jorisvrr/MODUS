@@ -2,7 +2,14 @@ import { execSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import path from "node:path";
 import { test, expect, type Page } from "@playwright/test";
+import { requireLocalMutableEnvironment } from "./localOnlyGuard";
 import { holdToSubmit } from "./holdToSubmit";
+
+/*
+ * These tests write real rows to the database, so they refuse to run
+ * unless the environment is unmistakably local development.
+ */
+requireLocalMutableEnvironment();
 
 // Unique per test (not a shared constant): /api/diagnostic rejects a second
 // submission from the same email within 60s as a likely duplicate, which

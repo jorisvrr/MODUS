@@ -1972,3 +1972,141 @@ No backend, auth, pricing, diagnostic, database or mail change. Not
 pushed, not deployed. `verify-production.mjs` and
 `verify-admin-production.mjs` were not run; no production submission, no
 mail, no membership change.
+
+## 36. Local environment restored to development — 4 October 2026
+
+### What had happened
+
+`.env.local`, modified 3 October 23:35, contained **production** values
+that overrode the development ones:
+
+| | |
+|---|---|
+| `DATABASE_URL` / `DIRECT_URL` | production Supabase pooler |
+| `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` / `CLERK_SECRET_KEY` | **duplicated**: `pk_test`/`sk_test` first, then `pk_live`/`sk_live` |
+| `NEXT_PUBLIC_SUPABASE_URL` / publishable key | production project |
+
+Next prefers `.env.local` over `.env`, so the development server read and
+wrote the **production database** while every test still looked local.
+The visible symptom was unrelated-looking: production Clerk rejecting
+localhost with *"The Request HTTP Origin header must be equal to or a
+subdomain of the requesting URL"*, surfacing as `400`s that failed the
+diagnostic spec's console-error assertion.
+
+### What was done
+
+Servers and test processes were stopped first. `.env.local` now holds
+**one** Clerk instance and **one** database, both development: the
+routing URLs, the `pk_test`/`sk_test` pair, and `localhost:5432/modus_dev`.
+Duplicates are gone. No secret was printed at any point.
+
+Production values were **moved**, not copied, into the files the
+production scripts already load explicitly:
+
+- `.env.supabase.local` — connection strings **plus** the Supabase
+  browser URL and publishable key.
+- `.env.production.local` — the production Clerk secret **and** now its
+  publishable key.
+
+All five env files are gitignored and none is tracked; only
+`.env.example` is in the repository.
+
+### Verified after restart, without printing credentials
+
+| Check | Result |
+|---|---|
+| Shell/process overrides | none set; no exports in shell profiles |
+| Clerk instance served to the browser | `pk_test_…` |
+| Effective database host | `localhost:5432` |
+| A real submission landed in | `modus_dev` ✓ |
+| The same submission in production | **absent** ✓ |
+| Production row count after the check | unchanged (1) |
+
+The `400` console errors are gone, and both diagnostic journey tests pass.
+
+### A guard, so this cannot pass silently again
+
+`e2e/localOnlyGuard.ts` refuses to run a **writing** test unless the
+environment is unmistakably local: a localhost database, no `pk_live` or
+`sk_live` key, and a localhost target. It is wired into the five specs
+that submit rows, and is **test-only** — nothing under `src/` imports it,
+so a real deployment, where a remote database and live keys are exactly
+what is wanted, is unaffected.
+
+Proven to fire, not just to exist:
+
+```
+MODUS_E2E_BASE_URL=https://www.withmodus.co → Refusing to run a writing test:
+  tests that write must target localhost, not www.withmodus.co
+DATABASE_URL=…pooler.supabase.com…          → Refusing to run a writing test:
+  DATABASE_URL points at aws-0-eu-west-1.pooler.supabase.com, not a local database
+```
+
+Six unit tests cover the rule, including that the refusal names the host
+but never the credentials in the URL.
+
+Also fixed: the diagnostic spec's cleanup shelled out to
+`sqlite3 prisma/dev.db` and had done nothing since the move to Postgres,
+so rows accumulated and the API's 60-second repeat-submission guard made
+re-runs fail as "the estimate never appeared".
+
+## 37. The missing production records — read-only findings
+
+**No write of any kind was performed.** No restore, insert, delete,
+migration or membership change; `verify-production.mjs` and
+`verify-admin-production.mjs` were not run.
+
+### What was inspected
+
+| | |
+|---|---|
+| Project | `qnoxrcjiynrbwmdekggh` |
+| Host | `aws-0-eu-west-1.pooler.supabase.com:5432` |
+| Database / schema | `postgres` / `public` |
+| Table | `"Diagnostic"` |
+
+### Facts
+
+`pg_stat_user_tables` for `"Diagnostic"`: **8 inserts, 7 deletes, 1 live
+row**, 16 dead tuples, autovacuum never run.
+
+`NotificationOutbox` keeps one row per submission and is **not**
+cascade-deleted, so it still lists submissions whose diagnostic is gone:
+
+| Outbox row | Diagnostic | Still exists |
+|---|---|---|
+| 3 Oct 12:31 | `cmusdftjk…` | **no** |
+| 3 Oct 12:56 | `cmuseb2730…` | **no** |
+| 3 Oct 16:24 | `cmuslquwf…` | **no** |
+| 4 Oct 09:58 | `cmutnezo90…` | yes — "Bagel ALley", `CONVERTED` |
+
+That reconciles: 8 inserts ≈ 4 imported originals + 2 authorized
+synthetic records + 1 further submission on 3 Oct + "Bagel ALley"; 7 of
+those 8 are deleted. No `ActivityEvent` rows are orphaned, which is
+consistent with deletion through a path that cascades.
+
+### Uncertainties, stated as such
+
+- **Who deleted the rows cannot be determined from the database.**
+  `track_commit_timestamp` is `off`, so Postgres records neither when a
+  row was deleted nor by whom. `AuditEvent` holds only admin
+  grant/revoke entries — the application does not write an audit row for
+  a diagnostic deletion, and deletions made in the Supabase SQL editor
+  would leave no application trace at all.
+- A lower row count is evidence that rows were deleted. It is **not**
+  evidence of who deleted them, and nothing here attributes them.
+- Statistics are cumulative since the last stats reset, whose time is not
+  recorded; autovacuum has never run on this table, so the counters are
+  likely to span the table's whole life, but that is an inference.
+
+### Recovery options — to be checked by the owner, not by me
+
+`wal_level = logical` and `archive_mode = on`, which are the settings
+point-in-time recovery depends on. Whether PITR is actually **available**
+and how far back it retains are properties of the Supabase plan and
+project settings, readable only in the Supabase dashboard
+(Database → Backups). Daily backups may also exist there.
+
+I have not attempted, staged or simulated any restore. If the originals
+matter, the dashboard is where to look, and a restore should be taken on
+a branch or a copy rather than over the live project.

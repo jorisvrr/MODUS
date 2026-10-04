@@ -1,5 +1,12 @@
 import { test, expect, type Locator, type Page } from "@playwright/test";
+import { requireLocalMutableEnvironment } from "./localOnlyGuard";
 import { holdToSubmit } from "./holdToSubmit";
+
+/*
+ * These tests write real rows to the database, so they refuse to run
+ * unless the environment is unmistakably local development.
+ */
+requireLocalMutableEnvironment();
 
 /**
  * The diagnostic's sphere -> layers -> stack -> closure graphic, verified

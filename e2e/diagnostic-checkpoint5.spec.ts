@@ -1,7 +1,14 @@
 import { execSync } from "node:child_process";
 import path from "node:path";
 import { test, expect, type Page } from "@playwright/test";
+import { requireLocalMutableEnvironment } from "./localOnlyGuard";
 import { holdToSubmit } from "./holdToSubmit";
+
+/*
+ * These tests write real rows to the database, so they refuse to run
+ * unless the environment is unmistakably local development.
+ */
+requireLocalMutableEnvironment();
 
 /**
  * Checkpoint 5 — Diagnostic presentation/interaction redesign. These tests

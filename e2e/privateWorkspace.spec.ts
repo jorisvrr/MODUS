@@ -1,5 +1,12 @@
 import { test, expect, type Page } from "@playwright/test";
+import { requireLocalMutableEnvironment } from "./localOnlyGuard";
 import { signInAs, testAccounts } from "./clerkBrowserSession";
+
+/*
+ * These tests write real rows to the database, so they refuse to run
+ * unless the environment is unmistakably local development.
+ */
+requireLocalMutableEnvironment();
 
 /**
  * The integration checks the handoff explicitly left open.

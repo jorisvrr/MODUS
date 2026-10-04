@@ -1,6 +1,13 @@
 import { test, expect, type Page } from "@playwright/test";
+import { requireLocalMutableEnvironment } from "./localOnlyGuard";
 import { PrismaClient } from "@prisma/client";
 import { holdToSubmit } from "./holdToSubmit";
+
+/*
+ * These tests write real rows to the database, so they refuse to run
+ * unless the environment is unmistakably local development.
+ */
+requireLocalMutableEnvironment();
 
 const TEST_EMAIL = "ada@playwright-qa.dev";
 const OPTIONAL_FIELD_TEST_EMAIL = "grace@playwright-qa.dev";
