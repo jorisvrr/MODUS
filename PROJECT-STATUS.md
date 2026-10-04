@@ -2833,3 +2833,87 @@ The one-time 401 retry added for it is proven not to weaken authorization
 all**, because "authenticated, not an admin" is not transient; and both
 attempts pass through `requireAdminSession`, which re-reads the
 `AdminMember` row every time — an anonymous caller is refused twice over.
+
+## 44. Migrated and deployed — 4 October 2026
+
+**Deployed commit: `1261aea`** (pushed `d5ca41c..1261aea`, seven commits).
+
+### Backup, taken and proven before anything else
+
+Outside the repository, at `~/modus-backups/20261004-201432`, mode 700:
+a data-only dump of `Diagnostic` and `NotificationOutbox`, a schema-only
+dump of the whole `public` schema, the pre-migration `_prisma_migrations`
+contents, and both Prisma schema definitions — the deployed one and the
+new one.
+
+Not merely taken: **restored into a scratch local database and checked**.
+Zero schema errors, both tables recreated, 1 and 4 rows back, the
+surviving record present by name. The scratch database was dropped
+afterwards. `pg_dump` is 17.11, the same version as the server.
+
+### The three migrations
+
+`prisma migrate deploy` applied exactly the three from the plan and
+nothing else. Status afterwards: *"Database schema is up to date!"*, seven
+migrations applied.
+
+| Check | Result |
+|---|---|
+| New columns | all 6 present, every one `nullable = YES` |
+| `Diagnostic` rows | **1**, unchanged — "Bagel ALley", `CONVERTED`, created 09:58:49Z |
+| Its values | `processStandardization = 2`; the three new columns `null` |
+| `NotificationOutbox` rows | **4**, unchanged, all `SENT`, `attempts = 1`, `html` and `replyTo` null |
+| `ActivityEvent` / `AuditEvent` | 2 / 5, untouched |
+| `processStandardization IS NULL` | **0** |
+
+No reset, no backfill, no deletion, no membership change, no production
+submission, no mail.
+
+### The old build, on the new schema, in production
+
+Checked **before** deploying, which is the step that proves the window is
+safe in production and not only in the local reproduction. Ten public
+routes **200**; `/private`, `/private/diagnostics` **307**;
+`/api/private/diagnostics` **401**. The old build was unaffected.
+
+### After the deploy
+
+| | |
+|---|---|
+| Public routes | all ten **200** |
+| `/brand/email-header-v1.jpg` | **200**, `image/jpeg`, 20,706 bytes — it 404'd before this deploy, which is what made the preview show the fallback |
+| `/private`, `/private/diagnostics`, `/private/pipeline`, `/private/settings` | **307**, never 200 and never 500 |
+| `/api/private/diagnostics`, `/api/private/overview` | **401** |
+| `/api/admin/status` | **200** with `{"admin":false}` — that endpoint exists to answer the question, so false is the right answer, not a leak |
+| Homepage markers | new heading, "Find my next step", "No account needed to start", the new chips, the LinkedIn link — all present; **"Recently Improved" absent** |
+| `productionGraphic.spec.ts` against the deployment | **2 passed** — the explanation, the growing composition, the summary appearing only after a real answer, and every retired surface absent. It fills one unsubmitted field and submits nothing. |
+| Outbox, read-only | 4 rows, all `SENT`, **0 PENDING, 0 FAILED** — nothing can send as a side effect. The three rows whose diagnostics are gone are untouched. |
+
+### Rollback position
+
+`processStandardization IS NULL` is still **0**, so the clean-rollback
+window is **open**. It closes at the first submission that answers the
+operations question with "Not sure / not applicable". After that, revert
+forward — to a build that tolerates a nullable column — never back to
+`d5ca41c`.
+
+### Found during verification, pre-existing, NOT caused by this migration
+
+`authenticated` holds **table-level** `INSERT, UPDATE, DELETE, TRUNCATE`
+on `Diagnostic`. The RLS migration's column-list grant was written to keep
+`status`, the pricing fields and `contextToken` unwritable — its own
+comment says "those columns are simply not granted" — but a broader
+table-level grant already existed, so the column list never constrained
+anything. Those columns are writable by that role today, and so are the
+three new ones, exactly as `companyName` always was.
+
+What still holds: RLS is enabled and `diagnostic_insert_own_draft` /
+`diagnostic_update_own_draft` / `diagnostic_delete_own_draft` limit writes
+to the caller's **own DRAFT** rows. The single production row is
+`CONVERTED`, so it is not writable through PostgREST by anyone.
+
+This is unchanged by today's work and was **not** altered — no grant was
+touched. It is recorded as a separate item worth fixing deliberately
+(revoke the table-level write grants, keep the column list), not folded
+into a release. My pre-migration plan stated the opposite about the new
+columns; that statement was wrong and is corrected here.
