@@ -2917,3 +2917,105 @@ touched. It is recorded as a separate item worth fixing deliberately
 (revoke the table-level write grants, keep the column list), not folded
 into a release. My pre-migration plan stated the opposite about the new
 columns; that statement was wrong and is corrected here.
+
+## 45. Authorised production email test — 4 October 2026
+
+One test diagnostic, authorised explicitly, submitted once through the
+real browser flow on the live site.
+
+### Before submitting
+
+- The new build was confirmed live (new homepage copy, header asset 200).
+- The internal recipient was read from past sends rather than from
+  configuration that might be changed: `hello@withmodus.co`. **No
+  recipient configuration was touched.**
+- Mail was known to be working: the previous outbox row was `SENT` with
+  `attempts: 1`.
+- Baseline recorded: 1 diagnostic, 4 outbox rows.
+
+### How it was run
+
+A one-off spec with **retries off** — a Playwright retry would have
+created a second record — that submits exactly once and only observes
+afterwards. It had no `requireLocalMutableEnvironment()` guard, which was
+the single authorised exception, and **the file was deleted immediately
+after the run** so it cannot execute again.
+
+The consent banner was dismissed with *Reject Optional* rather than left
+up: a fixed overlay near the submit control is not a risk worth carrying
+on a one-shot irreversible action, and rejecting turns nothing on.
+
+The site was switched to Dutch through the real language switch before
+starting, and the whole form was answered in Dutch.
+
+### Result
+
+| | |
+|---|---|
+| **Record ID** | **`cmuu5epyv0000l204ax8zijbr`** |
+| Company | MODUS — TEST |
+| Contact | Joris van Rijn `<jorisvrr@gmail.com>` |
+| Status | `NEW` |
+| Created | 2026-10-04T18:22:30.391Z |
+| `locale` | **`"nl"`** — captured at submit |
+| Estimate | 200 – 350 |
+| Console errors | 0 |
+
+Counts moved by exactly the expected amount: Diagnostic 1 → **2**,
+NotificationOutbox 4 → **6**, AuditEvent unchanged at 5, ActivityEvent
+2 → 3 (the submission's own event).
+
+### The two outbox items — exactly two, both SENT
+
+**Customer confirmation**
+
+```
+kind       diagnostic.received
+recipient  jorisvrr@gmail.com
+subject    We hebben je antwoorden ontvangen · MODUS
+replyTo    joris@withmodus.co
+STATUS     SENT   attempts=1   sentAt 2026-10-04T18:22:32.938Z
+lastError  none
+parts      text 550 chars, html 4419 chars
+```
+
+**Internal notification**
+
+```
+kind       diagnostic.submitted
+recipient  hello@withmodus.co          (the existing configured address)
+subject    Nieuwe diagnose: MODUS — TEST
+replyTo    jorisvrr@gmail.com
+STATUS     SENT   attempts=1   sentAt 2026-10-04T18:22:32.447Z
+lastError  none
+parts      text 1384 chars, html 14466 chars
+```
+
+Both sent on the **first** attempt, no error, both parts present. Nothing
+anywhere in the outbox is in any state other than `SENT`.
+
+**Provider acceptance is not inbox receipt.** `SENT` means Resend accepted
+the message; whether it arrived is for Joris to confirm.
+
+### What this also proved, incidentally
+
+The migrated columns got their first real production values, and the
+derivation behaved:
+
+| | |
+|---|---|
+| `taskConsistency` | "Iedereen doet het op zijn eigen manier." |
+| `absenceCoverage` | "Ja, dat kan een collega makkelijk overnemen." |
+| derived `processStandardization` | **1** — the lowest, correct for "everyone does it their own way" |
+| derived `keyEmployeeDependency` | **"Low"** — correct for "a colleague can easily take over" |
+
+Both answers were real, so no NULL was written:
+`processStandardization IS NULL` is still **0** and the clean-rollback
+window remains open.
+
+### Left alone
+
+The test record stays in place for manual inspection. No membership
+change, no second diagnostic, no forced resend, no other production
+mutation, and `verify-production.mjs` / `verify-admin-production.mjs` were
+not run.
