@@ -33,6 +33,39 @@ type Response = {
   pageCount: number;
 };
 
+/**
+ * Reads the list, retrying ONCE on a 401.
+ *
+ * A 401 here means the server saw no session, not a session without
+ * membership — that answers 403. Both are possible; only one is worth
+ * retrying.
+ *
+ * This exists because of a real failure: in a full suite run the list
+ * answered 401 to a request carrying a valid, one-second-old session
+ * token, with the same user, session and claims as a call that had
+ * answered 200 a second earlier. Eight isolated attempts could not
+ * reproduce it, so the cause is NOT established — but the symptom was an
+ * admin being told "That didn't load" when nothing was wrong with their
+ * access, and a second attempt is the proportionate answer to that
+ * whatever the cause turns out to be.
+ *
+ * It does not hide a genuine denial. A revoked admin's retry fails the
+ * same way, one request later, and the error state still appears.
+ */
+async function fetchList(url: string): Promise<Response> {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const res = await fetch(url, { cache: "no-store" });
+    if (res.ok) return res.json();
+    if (res.status !== 401 || attempt === 1) {
+      throw new Error(String(res.status));
+    }
+    // Long enough for a token refresh in flight to land, short enough
+    // that a real failure still surfaces promptly.
+    await new Promise((r) => setTimeout(r, 600));
+  }
+  throw new Error("unreachable");
+}
+
 export default function DiagnosticsPage() {
   return (
     <Suspense fallback={<LoadingRows />}>
@@ -88,12 +121,7 @@ function DiagnosticsInbox() {
     let cancelled = false;
     const timer = window.setTimeout(() => {
       setState("loading");
-      fetch(`/api/private/diagnostics?${params.toString()}`, {
-        cache: "no-store",
-      })
-        .then((r) =>
-          r.ok ? r.json() : Promise.reject(new Error(String(r.status))),
-        )
+      fetchList(`/api/private/diagnostics?${params.toString()}`)
         .then((json: Response) => {
           if (cancelled) return;
           setData(json);

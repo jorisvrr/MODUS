@@ -4,6 +4,7 @@ import { prisma } from "@/lib/db";
 import { after } from "next/server";
 import { dispatchPending, enqueueDiagnosticEmails } from "@/lib/notifications/outbox";
 import { LOCALE_COOKIE, isLocale } from "@/lib/i18n/config";
+import type { EmailLocale } from "@/lib/notifications/email/diagnosticEmails";
 import { SITE_ORIGIN } from "@/lib/legal/site";
 import {
   legacyDependency,
@@ -95,6 +96,28 @@ const submissionSchema = z.object({
   utmMedium: z.string().max(100).optional().default(""),
   utmCampaign: z.string().max(100).optional().default(""),
 });
+
+/**
+ * The site language the visitor was reading, read from the cookie the
+ * language switch sets. Unrecognised or absent is stored as null rather
+ * than as a guess.
+ */
+function submittedLocale(request: NextRequest): string | null {
+  const value = request.cookies.get(LOCALE_COOKIE)?.value;
+  return isLocale(value) ? value : null;
+}
+
+/**
+ * The language to write the confirmation in.
+ *
+ * The documented fallback for a submission with no recorded language —
+ * every record from before the column existed — is the site default,
+ * English, which is how those were already treated. It is stated once,
+ * here, rather than each caller choosing.
+ */
+function emailLocaleOf(stored: string | null): EmailLocale {
+  return stored === "nl" ? "nl" : "en";
+}
 
 /**
  * Reads back a column that stores a JSON array as text.
@@ -262,6 +285,19 @@ export async function POST(request: NextRequest) {
 
       idempotencyKey: idempotencyKey ?? null,
 
+      /*
+       * The site language at the moment of submission, from the same
+       * cookie the language switch sets — the website's own record of the
+       * choice, not a guess from a browser header, a country or the
+       * domain of an email address.
+       *
+       * Stored with the submission so the choice is a fact about the
+       * record rather than something re-derived later: a resend months
+       * from now uses the language they chose, not whatever this browser
+       * is set to then.
+       */
+      locale: submittedLocale(request),
+
       activityEvents: {
         create: { label: "Diagnostic submitted" },
       },
@@ -276,14 +312,7 @@ export async function POST(request: NextRequest) {
   // Enqueue AFTER the record is committed. A mail problem must never tell
   // the visitor their submission failed when it is safely saved, nor push
   // them into resubmitting.
-  //
-  // The confirmation is written in the language the visitor was reading
-  // the site in. The cookie the language switch already sets is the
-  // existing record of that choice, so it is read rather than a second one
-  // invented; absent or unrecognised, it falls back to the site default
-  // instead of guessing from a header.
-  const cookieLocale = request.cookies.get(LOCALE_COOKIE)?.value;
-  const locale = isLocale(cookieLocale) && cookieLocale === "nl" ? "nl" : "en";
+  const locale = emailLocaleOf(diagnostic.locale);
 
   await enqueueDiagnosticEmails(
     {
@@ -296,6 +325,11 @@ export async function POST(request: NextRequest) {
       primaryInterest: diagnostic.primaryInterest ?? "",
       priorities: parseJsonArray(diagnostic.priorities),
       problemDescription: diagnostic.problemDescription,
+      // Verbatim. The "not sure" / "I work alone" options are filtered out
+      // inside the template, which is where the rule belongs — see
+      // `withoutUnknownOperations`.
+      taskConsistency: diagnostic.taskConsistency ?? "",
+      absenceCoverage: diagnostic.absenceCoverage ?? "",
       industry: diagnostic.industry,
       employees: diagnostic.employees,
       locations: diagnostic.locations,

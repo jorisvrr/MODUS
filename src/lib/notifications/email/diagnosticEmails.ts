@@ -1,3 +1,7 @@
+import {
+  isUnknownAbsenceCoverage,
+  isUnknownTaskConsistency,
+} from "../../diagnostic/operationsMapping";
 import { headerSafe, oneLine } from "./html";
 import {
   renderEmailHtml,
@@ -33,6 +37,18 @@ export type DiagnosticEmailInput = {
   priorities: string[];
   /** Their own words about what goes wrong. May be empty. */
   problemDescription: string;
+  /**
+   * The two operations answers, verbatim.
+   *
+   * Empty when unanswered, and the honest "not sure" / "I work alone"
+   * options are filtered out BEFORE they reach here — see
+   * `withoutUnknownOperations`. They record what the visitor knows, not
+   * something true of their work, and a notification that listed "I work
+   * alone" under what the business is like would be turning an absence of
+   * information into a finding.
+   */
+  taskConsistency: string;
+  absenceCoverage: string;
   industry: string;
   employees: string;
   locations: string;
@@ -92,6 +108,23 @@ const SIGNATURE_ROLE_EN = "Founder · MODUS";
  * neither — and then the sentence that would have used it is left out
  * entirely rather than rendered with a gap in it.
  */
+/**
+ * Blanks the two operations answers when the visitor chose the honest
+ * unknown — "Not sure / not applicable", "I work alone".
+ *
+ * Applied at the edge, so every template below can treat an empty string
+ * as "nothing to say" and no template has to remember the rule. The same
+ * rule the diagnostic's own summary and the pricing engine follow: an
+ * unknown is not a low score and not a finding.
+ */
+export function withoutUnknownOperations(d: DiagnosticEmailInput): DiagnosticEmailInput {
+  return {
+    ...d,
+    taskConsistency: isUnknownTaskConsistency(d.taskConsistency) ? "" : d.taskConsistency,
+    absenceCoverage: isUnknownAbsenceCoverage(d.absenceCoverage) ? "" : d.absenceCoverage,
+  };
+}
+
 export function statedPriority(d: DiagnosticEmailInput): string {
   const direct = d.primaryInterest.trim();
   if (direct) return direct;
@@ -239,7 +272,8 @@ export function buildCustomerEmail(
  * token in the mail. A link that let its holder in would make every
  * forwarded notification a key.
  */
-export function buildAdminEmail(d: DiagnosticEmailInput, origin: string): BuiltEmail {
+export function buildAdminEmail(input: DiagnosticEmailInput, origin: string): BuiltEmail {
+  const d = withoutUnknownOperations(input);
   const site = origin.replace(/\/$/, "");
   const priority = statedPriority(d);
   const estimate = estimateLine(d, "nl");
@@ -287,6 +321,8 @@ export function buildAdminEmail(d: DiagnosticEmailInput, origin: string): BuiltE
         { label: "Samenhang tools", value: d.connectionLevel },
         { label: "Klanten bereiken ze via", value: list(d.reachChannels) },
         { label: "Handmatig werk", value: d.adminHours },
+        { label: "Terugkerende taken", value: d.taskConsistency },
+        { label: "Overname bij afwezigheid", value: d.absenceCoverage },
       ],
     },
     { kind: "divider" },

@@ -18,17 +18,29 @@ import { base, injection, long, manualScope, sparse } from "./fixtures";
 
 const OUT = path.join(process.cwd(), "email-previews");
 /*
- * Overridable so the previews can be rendered against a running dev
- * server, where `/brand/email-header-v1.jpg` actually resolves and the
- * header can be looked at. The default is the real origin, which is what
- * the assertions below check.
+ * The previews are rendered with the PRODUCTION origin, so every link,
+ * the signature and the footer read exactly as they will when sent.
+ *
+ * The header image is not published there yet, so opening a preview
+ * straight from disk shows the blocked-image fallback — which is the
+ * diagnosis of "the header looks wrong", not a fault in the header:
+ * `/brand/email-header-v1.jpg` 404s on the live site until this deploys,
+ * and serves 200 locally. `emailPreviewShots.spec.ts` serves that one URL
+ * from `public/` when photographing the loaded state, which keeps the
+ * HTML itself honest.
  */
 const ORIGIN = process.env.MODUS_EMAIL_PREVIEW_ORIGIN ?? "https://www.withmodus.co";
+const PRODUCTION_ORIGIN = "https://www.withmodus.co";
 
 const cases = [
   ["01-customer-nl", () => buildCustomerEmail(base, "nl", ORIGIN)],
   ["02-customer-en", () => buildCustomerEmail(base, "en", ORIGIN)],
+  // The chosen customer layout, in both languages. Everything authored is
+  // translated — subject, preheader, greeting, body, sign-off, footer —
+  // while the name, the company and their own words stay exactly as
+  // written.
   ["03-customer-nl-long", () => buildCustomerEmail(long, "nl", ORIGIN)],
+  ["03-customer-en-long", () => buildCustomerEmail(long, "en", ORIGIN)],
   ["04-customer-nl-sparse", () => buildCustomerEmail(sparse, "nl", ORIGIN)],
   ["05-customer-en-sparse", () => buildCustomerEmail(sparse, "en", ORIGIN)],
   ["06-customer-nl-priority-from-list", () => buildCustomerEmail(manualScope, "nl", ORIGIN)],
@@ -81,10 +93,25 @@ describe("previews", () => {
     // The header is absolute and versioned: mail clients and their image
     // proxies cache by URL.
     expect(html).toContain(`${ORIGIN}/brand/email-header-v1.jpg`);
+    // And with the real origin it is the real absolute URL, whatever the
+    // preview default happens to be.
+    expect(buildCustomerEmail(base, "nl", PRODUCTION_ORIGIN).html).toContain(
+      "https://www.withmodus.co/brand/email-header-v1.jpg"
+    );
     expect(html).toContain('alt="MODUS"');
-    // Scales down rather than forcing a 600px viewport on a phone.
+    // Scales down rather than forcing a 600px viewport on a phone, and is
+    // never cropped or stretched: no fixed container height, no
+    // object-fit, no overflow clipping.
     expect(html).toContain("max-width:600px");
     expect(html).toContain("height:auto");
+    // Scoped to the image: `overflow:hidden` legitimately appears on the
+    // hidden preheader, which is a different element doing a different job.
+    const img = html.match(/<img[^>]*>/)![0];
+    expect(img).not.toContain("object-fit");
+    expect(img).not.toContain("overflow");
+    // The attribute pair matches the asset's own 3:1 ratio, for clients
+    // that size from attributes rather than styles.
+    expect(html).toMatch(/<img[^>]*width="600"[^>]*height="200"/);
     // No external stylesheet, script or font: those do not survive an
     // inbox, and a mail that needs them is a mail that breaks.
     expect(html).not.toContain("<link");
@@ -98,6 +125,10 @@ describe("previews", () => {
     const { html } = buildCustomerEmail(base, "nl", ORIGIN);
     expect(html).toContain('bgcolor="#1E3B2E"');
     expect(html).toMatch(/<img[^>]*alt="MODUS"[^>]*color:#FFFFFF/);
+    // Left aligned, so a blocked header echoes the real one rather than
+    // reading as centred text that replaced the artwork.
+    expect(html).toMatch(/<img[^>]*text-align:left/);
+    expect(html).not.toMatch(/<img[^>]*text-align:center/);
   });
 
   it("carries one logo, not two", () => {

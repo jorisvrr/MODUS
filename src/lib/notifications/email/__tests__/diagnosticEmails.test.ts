@@ -7,7 +7,17 @@ import {
   receivedAt,
   statedPriority,
 } from "../diagnosticEmails";
-import { base, headerInjection, injection, long, manualScope, sparse } from "./fixtures";
+import {
+  base,
+  headerInjection,
+  historical,
+  injection,
+  long,
+  manualScope,
+  sparse,
+  worksAlone,
+  worksAloneEnglish,
+} from "./fixtures";
 
 const ORIGIN = "https://www.withmodus.co";
 
@@ -202,5 +212,104 @@ describe("the two parts say the same thing", () => {
         }
       }
     }
+  });
+});
+
+
+describe("an honest unknown is never turned into a finding", () => {
+  it("lists the operations answers when they are real", () => {
+    const mail = buildAdminEmail(base, ORIGIN);
+    expect(mail.text).toContain("Terugkerende taken");
+    expect(mail.text).toContain("Overname bij afwezigheid");
+  });
+
+  it('omits "not sure" and "I work alone" entirely, rather than reporting them', () => {
+    // The failure to avoid is a notification that lists "I work alone"
+    // under what the business is like. That records what the visitor
+    // knows, not something true of their work.
+    const mail = buildAdminEmail(worksAlone, ORIGIN);
+    expect(mail.text).not.toContain("Terugkerende taken");
+    expect(mail.text).not.toContain("Overname bij afwezigheid");
+    expect(mail.text).not.toMatch(/werk alleen|niet van toepassing|weet ik niet/i);
+    expect(mail.html).not.toMatch(/werk alleen|niet van toepassing/i);
+  });
+
+  it("applies the rule whichever language the option was answered in", () => {
+    const mail = buildAdminEmail(worksAloneEnglish, ORIGIN);
+    expect(mail.text).not.toContain("Terugkerende taken");
+    expect(mail.text).not.toMatch(/work alone|not applicable|not sure/i);
+  });
+
+  it("leaves the rest of the notification intact", () => {
+    // Dropping two rows must not drop the section they live in, nor
+    // anything else about the submission.
+    const mail = buildAdminEmail(worksAlone, ORIGIN);
+    expect(mail.text).toContain("Context");
+    expect(mail.text).toContain("Bakkerij / Food");
+    expect(mail.subject).toBe("Nieuwe diagnose: Eenmanszaak Jansen");
+  });
+
+  it("says nothing about operations for a historical submission", () => {
+    // Answered before the questions were rewritten, so it carries neither
+    // new answer. Absent, not guessed at from the legacy columns.
+    const mail = buildAdminEmail(historical, ORIGIN);
+    expect(mail.text).not.toContain("Terugkerende taken");
+    expect(mail.text).not.toContain("Overname bij afwezigheid");
+    expect(mail.text).not.toMatch(/\b[1-5] ?\/ ?5\b/);
+    expect(mail.text).not.toMatch(/\b(Low|Medium|High)\b/);
+  });
+
+  it("never reaches the customer confirmation at all", () => {
+    // The confirmation is prose about what happens next. It carries no
+    // operations answer in any case, which is the strongest form of this
+    // guarantee.
+    for (const d of [worksAlone, worksAloneEnglish, historical]) {
+      for (const loc of ["nl", "en"] as const) {
+        const mail = buildCustomerEmail(d, loc, ORIGIN);
+        expect(mail.text).not.toMatch(/work alone|werk alleen|Terugkerende taken|Recurring tasks/i);
+      }
+    }
+  });
+});
+
+describe("both customer languages are complete", () => {
+  it("translates everything authored, and nothing the visitor wrote", () => {
+    const nl = buildCustomerEmail(long, "nl", ORIGIN);
+    const en = buildCustomerEmail(long, "en", ORIGIN);
+
+    // Authored copy differs: subject, greeting, body, sign-off, footer.
+    expect(nl.subject).not.toBe(en.subject);
+    expect(nl.text).toContain("Hoi Alexandra-Wilhelmina,");
+    expect(en.text).toContain("Hi Alexandra-Wilhelmina,");
+    expect(nl.text).toContain("Groet,");
+    expect(en.text).toContain("Best,");
+    expect(nl.text).toContain("Oprichter · MODUS");
+    expect(en.text).toContain("Founder · MODUS");
+    expect(nl.text).toContain("Privacybeleid");
+    expect(en.text).toContain("Privacy policy");
+    expect(nl.html).toContain('lang="nl"');
+    expect(en.html).toContain('lang="en"');
+
+    // Their own words, their name and their company are identical in both.
+    for (const mail of [nl, en]) {
+      expect(mail.text).toContain("Van der Heijden Installatietechniek");
+      expect(mail.text).toContain("de volledige offerte- en nacalculatiestroom van begin tot eind");
+    }
+  });
+
+  it("has no untranslated leftovers in either direction", () => {
+    const nl = buildCustomerEmail(base, "nl", ORIGIN).text;
+    const en = buildCustomerEmail(base, "en", ORIGIN).text;
+    expect(nl).not.toMatch(/\b(Thanks for filling|Best,|Founder ·|Privacy policy)\b/);
+    // "Hoi" only appears in the Dutch one; the English body carries no
+    // Dutch fixed copy.
+    expect(en).not.toMatch(/\b(Hoi|Bedankt voor het invullen|Groet,|Oprichter ·|Privacybeleid)\b/);
+  });
+
+  it("keeps the internal notification Dutch whatever the customer chose", () => {
+    // Two mails from one submission, two audiences, one of which is
+    // always the same person.
+    expect(buildAdminEmail(base, ORIGIN).subject.startsWith("Nieuwe diagnose:")).toBe(true);
+    expect(buildAdminEmail(base, ORIGIN).html).toContain('lang="nl"');
   });
 });

@@ -46,6 +46,17 @@ model Diagnostic {
   // same row instead of creating a second lead.
   idempotencyKey String? @unique
 
+  /// The site language the visitor was reading when they submitted, taken
+  /// from the same cookie the language switch sets — not guessed from a
+  /// browser header, a country or an email address.
+  ///
+  /// Recorded so the choice is auditable and a later resend uses the
+  /// language they actually chose, rather than whatever the site is set to
+  /// by then. Null for submissions from before this existed; those fall
+  /// back to the site default (English), which is what they were already
+  /// treated as.
+  locale         String?
+
   status          String @default("NEW") // NEW, REVIEWING, REVIEWED, CONTACTED, QUALIFIED, CONVERTED, CLOSED
   statusUpdatedAt DateTime @default(now())
 

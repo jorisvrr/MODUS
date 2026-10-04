@@ -98,7 +98,23 @@ test.describe("admin workspace, against the real API and database", () => {
       // Confirmed by the server, not optimistic: the board announces only
       // after the PATCH resolved. The handoff's fixture checks mocked that
       // response and so could not show it reaching the database.
-      await expect(page.getByRole("status")).toContainText(/Saved/i, { timeout: 25_000 });
+      /*
+       * The board has TWO live regions: the sr-only announcement, always
+       * in the DOM, and a per-card "Saving…" that exists only while a
+       * PATCH is in flight. `getByRole("status")` therefore matches two
+       * elements for exactly as long as the request is outstanding, and
+       * Playwright's strict mode reports that ambiguity instead of what is
+       * actually wrong.
+       *
+       * That is not a cosmetic difference. In a full-suite run this failed
+       * as "resolved to 2 elements" after waiting the whole 25 seconds —
+       * which, read correctly, says the PATCH never resolved. Filtering to
+       * the region that carries the word makes the next such failure say
+       * so plainly: zero matches, not two.
+       */
+      await expect(page.getByRole("status").filter({ hasText: /Saved/i })).toHaveCount(1, {
+        timeout: 25_000,
+      });
 
       // The actual persistence claim: still true on the record itself
       // after a full reload, read back through the authenticated API.

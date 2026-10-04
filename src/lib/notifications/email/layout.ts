@@ -231,17 +231,27 @@ export function renderEmailHtml(doc: EmailDocument): string {
     .join("");
 
   /*
-   * The alt text is styled, and the cell behind it carries the brand
-   * green, because a great many people read mail with images off — and
-   * every image proxy fails sometimes. Unstyled, a blocked header is 200
-   * pixels of nothing above the first word. Styled, it is the word MODUS
-   * in white on green, which is what the image says anyway.
+   * The header renders at its own aspect ratio and is never cropped:
+   * `width:100%` up to 600, `height:auto`, no `object-fit` and no fixed
+   * container height. The asset is 1200×400, so at 600 wide it is exactly
+   * 200 tall, which is what the `height` attribute says for the clients
+   * that read attributes rather than styles.
+   *
+   * The styling on the `<img>` is for the ALT TEXT, which is what a client
+   * shows when images are blocked or the URL does not resolve. Left
+   * aligned and indented, so a blocked header echoes the real one — white
+   * wordmark on green at the left — rather than reading as centred text
+   * that replaced the artwork. `text-indent` rather than padding, because
+   * padding would also inset the image when it does load.
+   *
+   * The fallback box is deliberately shorter than the image: 200px of
+   * green holding one word is the large empty space to avoid.
    */
   const headerCell = headerSrc
     ? `<img src="${headerSrc}" width="${EMAIL.width}" height="200" alt="${escapeHtml(
         EMAIL_HEADER_ALT
-      )}" style="display:block;width:100%;max-width:${EMAIL.width}px;height:auto;border:0;outline:none;text-decoration:none;color:${EMAIL.accentForeground};font-family:${FONT};font-size:22px;font-weight:600;letter-spacing:0.14em;line-height:200px;text-align:center;" />`
-    : `<div style="font-family:${FONT};font-size:22px;font-weight:600;letter-spacing:0.14em;color:${EMAIL.accentForeground};line-height:72px;text-align:center;">${escapeHtml(
+      )}" style="display:block;width:100%;max-width:${EMAIL.width}px;height:auto;border:0;outline:none;text-decoration:none;color:${EMAIL.accentForeground};font-family:${FONT};font-size:22px;font-weight:600;letter-spacing:0.14em;line-height:96px;text-align:left;text-indent:32px;" />`
+    : `<div style="font-family:${FONT};font-size:22px;font-weight:600;letter-spacing:0.14em;color:${EMAIL.accentForeground};line-height:96px;text-align:left;text-indent:32px;">${escapeHtml(
         EMAIL_HEADER_ALT
       )}</div>`;
 

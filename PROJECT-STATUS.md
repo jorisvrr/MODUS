@@ -2538,3 +2538,236 @@ adds two **nullable** columns to `NotificationOutbox`. Nullable because
 rows enqueued before this existed have neither and must keep sending —
 the dispatcher falls back to the text part alone and omits Reply-To,
 which is asserted. Applied locally; **not applied to production.**
+
+## 42. Pre-release checks — 4 October 2026
+
+### 1. The full browser result, accounted for
+
+The run that produced "127 passed, 1 failed" was **130 tests**: 127
+passed, 1 failed, and **2 did not run**. The two were
+`privateWorkspace.spec.ts`'s *"a failed pricing save keeps the typed
+inputs"* and *"a successful delete returns to the inbox and removes the
+record"*. They were not skipped for a missing precondition: that file is
+`test.describe.configure({ mode: "serial" })`, so when one test in it
+fails Playwright does not run the rest. 127 + 1 + 2 = 130.
+
+### 2. The admin-fetch failure, from the trace rather than from a rerun
+
+Passing in isolation explains nothing, so the preserved trace was read
+instead. It is decisive and contradicts the first guess:
+
+| | |
+|---|---|
+| Request | `GET /api/private/diagnostics?page=1&pageSize=25` |
+| Response | **401** in **8.2 ms** |
+| Session token | `iat` **one second before** the request, 59 s remaining |
+| Claims | same `sub`, `sid`, `role`, `sts` as a call that answered **200** one second earlier |
+
+So: not a slow query, not missing data, not an expired token. `requireAuth`
+answers **403** for a signed-in non-admin and **401** only when
+`auth()` resolves no user at all — so Clerk's server-side verification saw
+no session for a token the browser had just rotated, three seconds after
+the sign-in handshake.
+
+The obvious hypothesis — a race between Clerk's client-side rotation and
+server-side verification — was **tested and did not reproduce**: eight
+runs, four going straight to the list after sign-in and four after a
+three-second settle, all 200. **The cause is not established.**
+
+What the next run gave is better evidence than another rerun would have
+been. A full suite failed instead on `privateWorkspace.spec.ts`'s pipeline
+test, with Playwright reporting a *strict mode violation* — and that
+turned out to be a real defect in the test that was **masking** the actual
+symptom. The board has two live regions: an sr-only announcement always in
+the DOM, and a per-card "Saving…" that exists only while a PATCH is in
+flight. `getByRole("status")` therefore matches two elements for exactly
+as long as the request is outstanding. Waiting the full 25 seconds and
+still seeing two means **the PATCH never resolved**.
+
+Read together, the three full-suite failures are one story: deep into a
+143-test serial run against a Turbopack dev server, the admin API becomes
+unresponsive — once answering 401, once not answering within 25 seconds.
+Never in isolation, and never on a production build. That is a statement
+about the local dev server under sustained load, not a product defect, and
+it is recorded as **unexplained** rather than fixed.
+
+Two changes came out of it, both worth having regardless:
+
+- The locator now filters to the region that carries the word, so the next
+  such failure reports *zero* matches — i.e. the truth — instead of two.
+- The diagnostics list **retries once on a 401** before showing "That
+  didn't load." A 401 means no session, not a session without membership;
+  only one of those is worth retrying, and a revoked admin still sees the
+  error one request later. The symptom was an admin told their list failed
+  when nothing was wrong with their access.
+
+### 3. The mobile flow, proven end to end
+
+`e2e/diagnosticMobile.spec.ts`, at 390×844, from the homepage to a row in
+the database — **with the consent banner left on screen the whole way**,
+deliberately. Dismissing it would remove the thing that broke: it is
+full-bleed and `fixed` at the bottom below `sm`, exactly where "Continue"
+sits, and `click()` keeps Playwright's actionability check, so every press
+in this test is a real assertion that the banner is not covering it.
+
+Covered: typing into the homepage field by keyboard; reaching a chip with
+Tab and toggling it with Space; the carried context arriving and being
+editable; the canvas **not** mounted and the explanation present as text;
+the summary growing with real answers; the description field staying empty
+until asked; typing the email address; the three review groups; a forced
+500; the calm retry state claiming no save; a second attempt that
+succeeds; and then, read from the database: the row exists with the right
+company, and **exactly two outbox rows** for it, both `PENDING`, the
+confirmation addressed to the submitter. Console errors are asserted empty
+before the forced failure, and afterwards only that failure's own error is
+tolerated.
+
+### 4. Historical answers, missing answers, and "I work alone"
+
+| Surface | What it does |
+|---|---|
+| Review screen | shows Business, Systems, Friction, Goal, Contact — it never showed the operations answers, so there is nothing there to misreport |
+| Admin detail | real answer verbatim; a pre-rewrite record as `3 / 5` **under the question it was actually asked**; neither answered nor legacy → "Not answered" |
+| Customer mail | carries no operations answer at all, in either language — the strongest form of the guarantee |
+| Internal mail | lists both answers, and **omits** them entirely when the visitor chose the honest unknown |
+
+Proven against real local data, not fixtures. 402 rows: 361 pre-rewrite
+(both new columns null), 41 post-rewrite, one of which answered *"Not
+applicable — I work alone."* That record's derived legacy column is
+`keyEmployeeDependency: ""` — **empty, not "High"** — which is the part-1
+mapping refusing to turn an absence of information into a negative
+finding, and the reason the admin view has nothing to misreport.
+`e2e/operationsAnswers.spec.ts` opens all three shapes in the real admin
+UI and asserts each, including that "A colleague can take over" is never
+followed by a Low/Medium/High level.
+
+Nine unit tests cover the same rule in the mail, in both languages, plus
+the historical shape.
+
+### 5. Independent retries, and no double send
+
+Structural, not incidental: two rows, two dedupe keys, two attempt
+counters, two backoff schedules, one dispatch loop that catches per row.
+
+Asserted with the customer's provider rejecting and MODUS's accepting,
+across two dispatch passes: the internal notification is sent **exactly
+once**, ends `SENT` with `attempts: 1`, while the customer row stays
+`PENDING` with its own non-zero attempt count. Enqueuing the same event
+three times still produces two rows. And a retry sends the stored HTML
+byte-for-byte, because both mails are composed at enqueue time.
+
+Confirmed on the real flow too: three live submissions produced two rows
+each, every one `PENDING` with `attempts: 0`, none sent — no provider is
+configured locally and the dispatcher says so rather than pretending.
+
+### 6. The production migration
+
+**Three** migrations are unapplied on production — the operations rewrite
+from part 1 as well as the two from the mail work. Read from
+`_prisma_migrations`: production has the four from 2 October and nothing
+since.
+
+| Migration | Change |
+|---|---|
+| `20261004000000_rewrite_operations_questions` | `processStandardization` **drops NOT NULL**; adds `taskConsistency`, `absenceCoverage` (nullable) |
+| `20261004120000_outbox_html_and_replyto` | adds `html`, `replyTo` to `NotificationOutbox` (nullable) |
+| `20261004140000_diagnostic_locale` | adds `locale` to `Diagnostic` (nullable) |
+
+Every one is additive or relaxing. No column is dropped, renamed, or
+retyped; no NOT NULL is added; no default is backfilled.
+
+**Compatibility, in both directions — and the order follows from it.**
+
+*Schema ahead of code* is safe. Prisma generates an explicit column list
+from the schema it was built with, so a column the deployed build has
+never heard of is simply not selected. Dropping NOT NULL does not affect
+a writer that always supplies a value.
+
+*Code ahead of schema* is **not** safe, and this was observed rather than
+assumed: pointing the new client at production fails with
+`P2022 — The column NotificationOutbox.html does not exist`. Every
+`notificationOutbox` query would fail, including the cron sweep and the
+dispatch after each submission.
+
+So the order is:
+
+1. **Apply the three migrations** (`prisma migrate deploy`, timestamp
+   order) while the current build keeps serving.
+2. **Verify** the five columns exist and `_prisma_migrations` lists seven.
+3. **Deploy the application.**
+4. **Check** the outbox sweep still runs and no row has gone `FAILED`.
+
+**No reset and no backfill.** `locale` stays null on historical rows and
+falls back to English at read time, which is how they were already
+treated; `taskConsistency`/`absenceCoverage` stay null on pre-rewrite rows
+with the legacy columns still authoritative for them; `html`/`replyTo`
+stay null on the four existing outbox rows, which are all `SENT` anyway.
+
+### 7. Deleted records and their outbox items — untouched
+
+Read-only `SELECT` and `information_schema` only.
+
+All **four** production outbox rows are `SENT`, `attempts: 1`.
+**Zero `PENDING`, zero `FAILED`.** Nothing there could send later, now or
+after the deploy. Three of the four reference diagnostics that no longer
+exist; they were left exactly as they are.
+
+### 8. Captures
+
+- Graphic: `e2e-screens/01-entry`, `02`–`04` form, `05-review-three-groups`,
+  `06-edit-updates-summary`, `07-result-closure`, `08-profile-closure`,
+  `09-submit-error`, `10-retry-succeeded`, `11`–`13` reduced motion,
+  `14`–`17` phone.
+- Homepage: `home-start-here-{desktop,mobile}`, `home-full-{desktop,mobile}`.
+- Mobile journey: `mobile-01-intro-with-context` … `mobile-05-result`.
+- Admin operations answers: `admin-ops-{answered,works-alone,historical}`.
+- Email: `email-previews/shot-{customer-03-nl,customer-03-en,admin-08}-{desktop,mobile}-{loaded,blocked}.png`
+  — twelve captures, both chosen layouts in all four states.
+
+### The header, diagnosed before being changed
+
+The preview did not deviate from the supplied artwork. The file referenced
+is `/brand/email-header-v1.jpg`; it serves **200** locally and **404** on
+`www.withmodus.co`, because this is not deployed yet. What was being
+looked at was therefore **the blocked-image fallback**, not the header.
+
+No crop and no stretch: `width:100%`, `max-width:600px`, `height:auto`, no
+`object-fit`, no `overflow`, no fixed container height, and the asset is
+1200×400 so the `width="600" height="200"` attribute pair matches its own
+3:1 ratio exactly. Asserted, including a measured 3:1 bounding box in the
+captures.
+
+Two things did change. The previews now carry the **production** origin,
+so links, signature and footer read exactly as sent, and the screenshot
+pass serves that one image URL from `public/` — the same bytes that will
+be published. And the fallback is now **left-aligned and indented**, so a
+blocked header echoes the real one rather than reading as centred text
+that replaced the artwork.
+
+### Both customer languages
+
+The language is now **recorded on the submission** (`Diagnostic.locale`),
+taken from the same cookie the site's own language switch sets — not from
+a browser header, a country or an email domain. The mail is composed in
+that language at enqueue and stored, so retries keep it even if the
+visitor changes the site preference afterwards.
+
+Everything authored is translated: subject, preheader, greeting, body,
+sign-off, role, footer and `lang`. Names, company names and free-text
+answers are untouched — visible in the previews, where an English
+confirmation carries a Dutch sentence the visitor wrote. The internal
+notification stays Dutch regardless.
+
+**Fallback for a submission with no recorded language: English**, the site
+default, stated in one place (`emailLocaleOf`) rather than per caller.
+That is how those records were already treated.
+
+Verified through the real submit flow, three times:
+
+| Cookie | Stored `locale` | Confirmation | Internal |
+|---|---|---|---|
+| `modus_locale=nl` | `"nl"` | *We hebben je antwoorden ontvangen · MODUS* | Dutch |
+| `modus_locale=en` | `"en"` | *We've received your answers · MODUS* | Dutch |
+| absent | `null` | English (fallback) | Dutch |
+
+All six rows `PENDING`, none sent, all removed afterwards.

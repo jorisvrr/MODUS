@@ -1,3 +1,8 @@
+import {
+  ABSENCE_COVERAGE_OPTIONS,
+  TASK_CONSISTENCY_OPTIONS,
+} from "../../../diagnostic/operationsOptions";
+import { UNKNOWN_INDEX } from "../../../diagnostic/operationsMapping";
 import type { DiagnosticEmailInput } from "../diagnosticEmails";
 
 /**
@@ -17,6 +22,8 @@ export const base: DiagnosticEmailInput = {
   priorities: ["Tijd besparen", "Meer aanvragen omzetten"],
   problemDescription:
     "Offertes gaan nu per mail de deur uit en daarna raken we het spoor bijster. Niemand weet wie wat heeft nagebeld.",
+  taskConsistency: TASK_CONSISTENCY_OPTIONS.nl[1],
+  absenceCoverage: ABSENCE_COVERAGE_OPTIONS.nl[1],
   industry: "Bakkerij / Food",
   employees: "6–20",
   locations: "2–5",
@@ -70,6 +77,8 @@ export const sparse: DiagnosticEmailInput = {
   primaryInterest: "",
   priorities: [],
   problemDescription: "",
+  taskConsistency: "",
+  absenceCoverage: "",
   industry: "",
   employees: "1–5",
   locations: "1",
@@ -111,4 +120,36 @@ export const injection: DiagnosticEmailInput = {
 export const headerInjection: DiagnosticEmailInput = {
   ...base,
   companyName: "Evil BV\r\nBcc: someone@elsewhere.example",
+};
+
+
+/**
+ * The honest unknowns: "Not sure / not applicable" and "I work alone".
+ *
+ * These must never surface as a statement about the business — not in the
+ * notification, and not anywhere else.
+ */
+export const worksAlone: DiagnosticEmailInput = {
+  ...base,
+  companyName: "Eenmanszaak Jansen",
+  taskConsistency: TASK_CONSISTENCY_OPTIONS.nl[UNKNOWN_INDEX],
+  absenceCoverage: ABSENCE_COVERAGE_OPTIONS.nl[UNKNOWN_INDEX],
+};
+
+/** The same, answered in English — the rule is not language-specific. */
+export const worksAloneEnglish: DiagnosticEmailInput = {
+  ...worksAlone,
+  taskConsistency: TASK_CONSISTENCY_OPTIONS.en[UNKNOWN_INDEX],
+  absenceCoverage: ABSENCE_COVERAGE_OPTIONS.en[UNKNOWN_INDEX],
+};
+
+/**
+ * A historical submission: answered before the operations questions were
+ * rewritten, so it carries neither new answer.
+ */
+export const historical: DiagnosticEmailInput = {
+  ...base,
+  companyName: "Historisch BV",
+  taskConsistency: "",
+  absenceCoverage: "",
 };
