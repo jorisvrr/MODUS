@@ -347,3 +347,180 @@ properties, each asserted in `e2e/adminRetrySafety.spec.ts`:
    `requireAdminSession`, which re-reads the `AdminMember` row on every
    request; an anonymous caller is refused twice over. The retry is a
    second call to the same gate, never a second answer from it.
+
+---
+
+# Round 2 — prepared, not executed
+
+Three further migrations. **Nothing has been applied to production, pushed
+or deployed.** All three are applied and tested locally.
+
+## The migrations
+
+### `20261004200000_outbox_provider_message_id`
+
+```sql
+ALTER TABLE "NotificationOutbox" ADD COLUMN IF NOT EXISTS "providerMessageId" TEXT;
+ALTER TABLE "NotificationOutbox" ADD COLUMN IF NOT EXISTS "deliveryState" TEXT;
+ALTER TABLE "NotificationOutbox" ADD COLUMN IF NOT EXISTS "deliveryStateAt" TIMESTAMP(3);
+```
+
+Three nullable columns. **Nothing is backfilled** — the six existing rows
+have no provider id and nothing is known about their delivery, and writing
+`ACCEPTED` into them retroactively would invent a fact we never recorded.
+The one historical delivery we *do* know about, the re-sent internal
+notification, is recorded in PROJECT-STATUS, not in the database, because
+the column did not exist when it was sent.
+
+### `20261004210000_restrict_authenticated_grants`
+
+Privileges only — **no schema change**. Revokes everything from `anon` and
+`authenticated` on the ten application tables, then re-grants exactly the
+surface the RLS design described, and finally revokes Supabase's *default*
+privileges so the next table created does not get the blanket grant again.
+
+Measured on production before writing it:
+
+| Table | Role | Currently holds |
+|---|---|---|
+| Diagnostic | authenticated | DELETE, INSERT, REFERENCES, SELECT, TRIGGER, **TRUNCATE**, UPDATE |
+| Note | authenticated | same |
+| Profile | authenticated | same |
+| ActivityEvent | authenticated | same |
+| ActivityEvent | **anon** | same |
+
+**TRUNCATE is the serious one**: row-level security does not constrain it,
+so any role holding it can empty the table whatever the policies say.
+`anon` holding writes on `ActivityEvent` is next — the design granted that
+table `SELECT`, to `authenticated`, and nothing else.
+
+After, locally:
+
+```
+ActivityEvent   authenticated  SELECT
+Diagnostic      authenticated  DELETE, SELECT        (+ column-limited INSERT/UPDATE)
+Note            authenticated  DELETE, INSERT, SELECT, UPDATE
+Profile         authenticated  INSERT, SELECT        (+ column-limited UPDATE)
+anon            nothing, anywhere
+TRUNCATE        held by nobody
+```
+
+A bug in the original was found while verifying this: `GRANT INSERT,
+UPDATE (cols)` binds the column list to `UPDATE` only, so **INSERT was
+granted on every column** — a visitor could insert their own draft with a
+chosen `status`, `contextToken` or pricing band. INSERT now has its own
+column list, and `status`, `contextToken`, `pricingBand` and
+`calculatedEstimateMin` are confirmed to have neither INSERT nor UPDATE.
+
+### `20261004220000_diagnostic_deletion_audit`
+
+A new table, a `SECURITY DEFINER` function with a pinned `search_path`,
+and an `AFTER DELETE ... FOR EACH ROW` trigger on `Diagnostic`.
+
+```
+DiagnosticDeletion(id, deletedAt, diagnosticId, actorId, dbRole, source)
+```
+
+A trigger rather than application code, because application code would
+still have missed a deletion made from the SQL editor — which is exactly
+the case that left no trace twice. It is atomic by construction: a trigger
+runs inside the deleting transaction, so the audit row and the deletion
+commit together or not at all. The table has **no foreign key**, so no
+cascade can take the record of what was cascaded.
+
+It holds no answers, no contact details and no capability token. The
+DELETE route now runs in a transaction that sets `modus.actor_id` with
+`set_config(..., true)` — transaction-local, so it cannot leak across a
+pooled connection — and uses `requireAdminApi`, which returns the verified
+admin's id.
+
+## Tested locally
+
+| Claim | Result |
+|---|---|
+| A route deletion records actor, time, record id, role and source | **PASS** — a real browser deletion recorded `user_3KBmr6…`, `source=admin-api` |
+| A deletion from outside the app is still recorded | **PASS** — raw SQL delete produced a row |
+| …with the actor honestly null, not invented | **PASS** — `actorId=null`, `source='unknown'` |
+| The audit survives the cascade it records | **PASS** — child rows cascaded, audit row did not |
+| No foreign key exists for a future cascade to follow | **PASS** |
+| A rolled-back deletion leaves no audit row | **PASS** — record intact, no row |
+| No answers, contact details or tokens stored | **PASS** — six columns, none of them |
+| TRUNCATE revoked, `anon` reduced to nothing | **PASS** |
+| Intended access preserved | **PASS** — `companyName` INSERT/UPDATE still granted |
+
+201 unit tests pass; lint unchanged from baseline.
+
+## Impact, and what could break
+
+| Migration | Blast radius |
+|---|---|
+| `…provider_message_id` | none. Additive, nullable, unread by the deployed build |
+| `…restrict_authenticated_grants` | **none in this codebase** — nothing imports `src/lib/supabase/client.ts`, and every database access runs through Prisma as the owner role, which these statements do not touch |
+| `…diagnostic_deletion_audit` | new table and trigger. The deployed build never queries the table; the trigger fires for its deletions too, recording them with `actorId=null, source='unknown'`, which is accurate for a build that does not set an actor |
+
+**The one thing to confirm before applying the grants migration:** whether
+anything *outside this repository* reaches the database through PostgREST
+with the anon or publishable key — an automation, a no-code tool, a
+dashboard. I can see that nothing in this codebase does. I cannot see
+what else exists. If something does, it will stop working, and it should
+be granted explicitly rather than relying on the blanket default.
+
+The trigger starts protecting before the new code ships, which is an
+argument for applying these promptly rather than holding them for the
+deploy.
+
+## Deployment order
+
+Same shape as round 1, and for the same reason: schema ahead of code is
+safe, code ahead of schema is not.
+
+1. **Back up both tables and the schema**, as before, and verify the dump
+   restores. The earlier backup is at `~/modus-backups/20261004-201432`; a
+   fresh one belongs to this change.
+2. **Apply all three**, in timestamp order:
+   ```bash
+   node --env-file=.env.supabase.local node_modules/prisma/build/index.js migrate deploy
+   ```
+3. **Verify** — ten migrations applied, the three new columns present and
+   nullable, `DiagnosticDeletion` present and empty, the trigger attached,
+   `TRUNCATE` held by nobody, `anon` holding nothing:
+   ```sql
+   SELECT tgname FROM pg_trigger WHERE tgrelid = '"Diagnostic"'::regclass AND NOT tgisinternal;
+   SELECT table_name, grantee, privilege_type FROM information_schema.table_privileges
+   WHERE table_schema='public' AND grantee IN ('anon','authenticated') ORDER BY 1,2,3;
+   SELECT count(*) FROM "Diagnostic";             -- expect 1, unchanged
+   SELECT count(*) FROM "NotificationOutbox";     -- expect 6, unchanged
+   ```
+4. **Confirm the live build still works** while still on the old code —
+   public routes, the admin inbox, and one admin action.
+5. **Deploy.**
+6. **Verify after:** a new submission stores `providerMessageId` and
+   `deliveryState='ACCEPTED'`; an admin deletion writes a
+   `DiagnosticDeletion` row carrying the Clerk actor.
+
+## Rollback
+
+All three are reversible without data loss, and none of them writes to an
+existing row.
+
+```sql
+-- 20261004220000
+DROP TRIGGER IF EXISTS "diagnostic_deletion_audit" ON "Diagnostic";
+DROP FUNCTION IF EXISTS public.record_diagnostic_deletion();
+DROP TABLE IF EXISTS "DiagnosticDeletion";       -- discards the audit trail
+
+-- 20261004200000
+ALTER TABLE "NotificationOutbox"
+  DROP COLUMN IF EXISTS "providerMessageId",
+  DROP COLUMN IF EXISTS "deliveryState",
+  DROP COLUMN IF EXISTS "deliveryStateAt";
+```
+
+Reverting `20261004210000` means restoring `GRANT ALL ... TO anon,
+authenticated`, i.e. deliberately restoring the over-permissive state. No
+script is provided for that on purpose; if something external turns out to
+need access, grant that thing what it needs rather than restoring the
+blanket.
+
+The `processStandardization` rollback note from round 1 still applies and
+is unaffected by any of this.

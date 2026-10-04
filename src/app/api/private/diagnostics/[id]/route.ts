@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
-import { requireAuth } from "@/lib/auth/requireAuth";
+import { requireAdminApi, requireAuth } from "@/lib/auth/requireAuth";
 import { parseDiagnostic, STATUSES } from "@/lib/admin/types";
 import { findPossibleDuplicates } from "@/lib/admin/duplicates";
 
@@ -91,10 +91,31 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
 }
 
 export async function DELETE(_request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const unauthorized = await requireAuth();
-  if (unauthorized) return unauthorized;
+  // `requireAdminApi` rather than `requireAuth`: a deletion has to be
+  // attributable, so the verified admin's id is needed, not merely the
+  // fact that someone passed the gate.
+  const auth = await requireAdminApi();
+  if (!auth.ok) return auth.response;
 
   const { id } = await params;
-  await prisma.diagnostic.delete({ where: { id } });
+
+  /*
+   * The audit row is written by a database trigger, not here — see
+   * `20261004220000_diagnostic_deletion_audit` for why. What this has to
+   * do is tell the trigger WHO is deleting, which it cannot otherwise
+   * know.
+   *
+   * `set_config(..., true)` is transaction-local, so the setting lives
+   * exactly as long as the delete it describes and cannot leak into the
+   * next query on a pooled connection. Both statements run in one
+   * transaction with the delete, so the audit row and the deletion commit
+   * together or not at all.
+   */
+  await prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT set_config('modus.actor_id', ${auth.userId}, true)`;
+    await tx.$executeRaw`SELECT set_config('modus.delete_source', 'admin-api', true)`;
+    await tx.diagnostic.delete({ where: { id } });
+  });
+
   return NextResponse.json({ ok: true });
 }

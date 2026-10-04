@@ -3099,3 +3099,85 @@ looked at the root domain when Resend sends from
 present at `resend._domainkey.notifications.withmodus.co`, SPF on the
 `send.` bounce subdomain via `send.forge.rmta.net`, DMARC inheriting
 `p=none`. Authentication was never the problem.
+
+## 47. Email test confirmed, and one targeted remediation prepared
+
+**The email test is recorded as successful.** Joris confirmed receipt of
+both the customer confirmation and the re-sent internal notification. The
+re-send was accepted as `01a10841-4efb-7c07-ad8d-da55615c848e`; the
+status lookup returned 401 because the temporary key was Sending-only, so
+no retry was attempted and no broader rights were requested. No further
+sends, and no restore of anything.
+
+Two things that followed from it: the suppression on
+`hello@withmodus.co` was the cause and is now evidence rather than
+hypothesis, and `notifications.withmodus.co` is correctly configured —
+DKIM present, SPF on the `send.` bounce subdomain, DMARC inheriting
+`p=none`. Authentication was never the problem; my earlier reading of the
+root domain was the wrong record.
+
+### Three migrations prepared — not applied to production, not deployed
+
+The runbook is Round 2 in `MIGRATION-PLAN.md`. All three are applied and
+tested locally.
+
+**1. The over-broad PostgREST grants.** Supabase's default privileges had
+granted ALL on every public table to `anon` and `authenticated`, which
+silently defeated the column list `20261002185220_rls_policies` was
+written around. `TRUNCATE` is the serious one — row-level security does
+not constrain it, so a role holding it can empty a table whatever the
+policies say — and `anon` held writes on `ActivityEvent` that were never
+granted to it.
+
+Everything is revoked and the intended surface re-granted. A bug in the
+original surfaced while verifying: `GRANT INSERT, UPDATE (cols)` binds
+the column list to `UPDATE` only, so **INSERT was granted on every
+column** and a visitor could have inserted their own draft with a chosen
+`status`, `contextToken` or pricing band. INSERT now has its own list.
+Supabase's default privileges are revoked too, so the next table created
+does not quietly get the blanket grant back.
+
+**2. Durable audit for diagnostic deletions.** A `DiagnosticDeletion`
+table written by an `AFTER DELETE` trigger, not by application code —
+because application code would still have missed the SQL-editor deletion
+that is exactly the case that left no trace, twice. Atomic by
+construction: a trigger runs inside the deleting transaction, so the
+audit row and the deletion commit together or not at all. No foreign key,
+so no cascade can take the record of what was cascaded. It stores the
+record id, the actor, the time, the database role and the route — and no
+answers, no contact details and no capability token, because keeping a
+copy would defeat the erasure a deletion may have been performed to
+achieve.
+
+The DELETE route now uses `requireAdminApi` for the verified admin id and
+sets `modus.actor_id` with `set_config(..., true)`, which is
+transaction-local and cannot leak across a pooled connection.
+
+**3. `providerMessageId` / `deliveryState`**, carried forward from §46.
+Nothing is backfilled: the six existing rows have no provider id and
+nothing known about their delivery, and the one delivery we do know about
+is recorded here rather than written into a column that did not exist
+when it happened.
+
+### Verified locally
+
+A real deletion through the admin UI recorded
+`actor=user_3KBmr6tFcX0zT04eyI9gZ8OFzsS`, `source=admin-api`. A raw SQL
+deletion was recorded too, with the actor honestly null and the source
+`unknown`. The audit row survived the cascade that removed the
+diagnostic's own child rows; a rolled-back deletion left no audit row and
+no missing record. `TRUNCATE` is held by nobody, `anon` holds nothing, and
+`status`, `contextToken`, `pricingBand` and `calculatedEstimateMin` have
+neither INSERT nor UPDATE — while `companyName` still does.
+
+201 unit tests and **149 of 149 browser tests** pass. That is the first
+fully clean full-suite run: the ambiguous `getByRole("status")` locator
+that had been masking the real failure is fixed, and nothing recurred.
+
+### One thing to confirm before applying the grants migration
+
+Whether anything **outside this repository** reaches the database through
+PostgREST with the anon or publishable key — an automation, a no-code
+tool, a dashboard. Nothing in this codebase does: `src/lib/supabase/
+client.ts` has no importers and every access goes through Prisma as the
+owner. What exists outside it, I cannot see.

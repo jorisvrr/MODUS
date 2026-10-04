@@ -327,6 +327,39 @@ model GuestClaimToken {
 
 /// Append-only audit of consequential administrative actions.
 /// Deliberately records WHAT changed, never the full answers or secrets.
+/// A deletion of a Diagnostic, recorded so it cannot be lost.
+///
+/// Written by a database TRIGGER, not by application code, so a deletion
+/// made from the SQL editor or any future code path is recorded too — and
+/// so the audit row and the deletion commit in one transaction or not at
+/// all. Production records have twice vanished with no trace; this is what
+/// closes that.
+///
+/// Deliberately NOT related to `Diagnostic`. It has to survive the row it
+/// describes, so there is no foreign key for a cascade to follow.
+///
+/// Holds no answers, no contact details and no capability token: the id,
+/// the actor and the time answer "who deleted what, and when" without
+/// keeping a copy of data the deletion may have been meant to erase.
+///
+/// The trigger and its function live in
+/// `20261004220000_diagnostic_deletion_audit` — Prisma does not manage
+/// either, so that migration is the source of truth for them.
+model DiagnosticDeletion {
+  id           String   @id @default(uuid())
+  deletedAt    DateTime @default(now())
+  diagnosticId String
+  /// Clerk user id, when the deleting session identified itself.
+  actorId      String?
+  /// The database role. Always present.
+  dbRole       String
+  /// 'admin-api', or 'unknown' when the caller did not say.
+  source       String
+
+  @@index([deletedAt])
+  @@index([diagnosticId])
+}
+
 model AuditEvent {
   id        String   @id @default(cuid())
   createdAt DateTime @default(now())
