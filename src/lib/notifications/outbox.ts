@@ -1,4 +1,10 @@
 import { prisma } from "@/lib/db";
+import {
+  buildAdminEmail,
+  buildCustomerEmail,
+  type DiagnosticEmailInput,
+  type EmailLocale,
+} from "./email/diagnosticEmails";
 
 /**
  * Durable outbox for internal notification email.
@@ -11,6 +17,13 @@ import { prisma } from "@/lib/db";
  *
  * `dedupeKey` is unique, so a retry of the same event resolves to the same
  * outbox row rather than sending twice.
+ *
+ * A submission produces TWO rows — one confirmation to the customer, one
+ * notification to MODUS — and they are independent in every way that
+ * matters. Separate dedupe keys, separate attempt counters, separate
+ * backoff, and a dispatch loop that catches per row. So a customer address
+ * that bounces retries only the customer mail, and can never cause the
+ * internal notification to be sent a second time.
  */
 
 /**
@@ -39,11 +52,12 @@ export type SubmissionNotification = {
 };
 
 /**
- * Builds the internal notification.
+ * The previous text-only internal notification.
  *
- * Deliberately a SUMMARY plus a link, not the submission itself: full
- * diagnostic answers stay behind admin authentication rather than sitting
- * in an inbox and in every mail server along the way.
+ * Kept because its unit tests describe behaviour that still has to hold —
+ * header-safe subjects, answers not being inlined — and because the admin
+ * mail's dedupe key is unchanged, so a half-deployed state cannot produce
+ * two internal notifications for one submission.
  */
 export function buildSubmissionEmail(n: SubmissionNotification) {
   const subject = headerSafe(`New MODUS ${n.formType} — ${n.companyName}`);
@@ -65,37 +79,89 @@ export function buildSubmissionEmail(n: SubmissionNotification) {
 }
 
 /**
- * Enqueues a notification. Call this AFTER the submission is committed.
+ * Enqueues one mail. Never throws into the request path.
  *
- * Never throws into the request path: if enqueueing fails, the submission
- * is still saved and the visitor must still be told it succeeded, because
- * it did. The failure is logged for reconciliation instead.
+ * If enqueueing fails the submission is still saved and the visitor must
+ * still be told it succeeded, because it did. The failure is logged for
+ * reconciliation instead. Each call is independent: one failing does not
+ * stop or repeat the other.
  */
-export async function enqueueSubmissionNotification(
-  n: SubmissionNotification
-): Promise<void> {
-  const { subject, body } = buildSubmissionEmail(n);
+async function enqueue(row: {
+  kind: string;
+  dedupeKey: string;
+  recipient: string;
+  subject: string;
+  body: string;
+  html?: string;
+  replyTo?: string;
+}): Promise<void> {
   try {
     await prisma.notificationOutbox.create({
-      data: {
-        kind: "diagnostic.submitted",
-        // One delivery per submission, no matter how many times the event
-        // is replayed.
-        dedupeKey: `diagnostic.submitted:${n.diagnosticId}`,
-        recipient: NOTIFICATION_RECIPIENT,
-        subject,
-        body,
-        nextAttemptAt: new Date(),
-      },
+      data: { ...row, nextAttemptAt: new Date() },
     });
   } catch (error) {
     const known = error as { code?: string };
     // P2002 = unique violation on dedupeKey: already enqueued. That is the
     // mechanism working, not a problem.
     if (known.code !== "P2002") {
-      console.error("[outbox] enqueue failed; submission is still saved", error);
+      console.error(`[outbox] enqueue of ${row.kind} failed; submission is still saved`, error);
     }
   }
+}
+
+/**
+ * Enqueues the confirmation and the internal notification for a saved
+ * diagnostic. Call this AFTER the submission is committed.
+ *
+ * Both are composed here and stored, so a retry hours later sends what was
+ * written at submission time rather than re-rendering against a record a
+ * reviewer has since edited.
+ */
+export async function enqueueDiagnosticEmails(
+  d: DiagnosticEmailInput,
+  locale: EmailLocale,
+  origin: string
+): Promise<void> {
+  const customer = buildCustomerEmail(d, locale, origin);
+  const admin = buildAdminEmail(d, origin);
+
+  await Promise.all([
+    enqueue({
+      kind: "diagnostic.received",
+      dedupeKey: `diagnostic.received:${d.id}`,
+      recipient: d.email,
+      subject: customer.subject,
+      body: customer.text,
+      html: customer.html,
+      replyTo: customer.replyTo,
+    }),
+    enqueue({
+      kind: "diagnostic.submitted",
+      // Unchanged from the text-only version on purpose: one internal
+      // notification per submission, however many times the event is
+      // replayed or whichever build enqueued it.
+      dedupeKey: `diagnostic.submitted:${d.id}`,
+      recipient: NOTIFICATION_RECIPIENT,
+      subject: admin.subject,
+      body: admin.text,
+      html: admin.html,
+      replyTo: admin.replyTo,
+    }),
+  ]);
+}
+
+/** @deprecated Use `enqueueDiagnosticEmails`. Kept for existing callers. */
+export async function enqueueSubmissionNotification(
+  n: SubmissionNotification
+): Promise<void> {
+  const { subject, body } = buildSubmissionEmail(n);
+  await enqueue({
+    kind: "diagnostic.submitted",
+    dedupeKey: `diagnostic.submitted:${n.diagnosticId}`,
+    recipient: NOTIFICATION_RECIPIENT,
+    subject,
+    body,
+  });
 }
 
 /**
@@ -136,7 +202,15 @@ export async function dispatchPending(limit = 20): Promise<{
 
   for (const row of due) {
     try {
-      await sendMail({ to: row.recipient, subject: row.subject, text: row.body });
+      await sendMail({
+        to: row.recipient,
+        subject: row.subject,
+        text: row.body,
+        // Rows enqueued before the HTML part existed have neither of
+        // these, and still send correctly as text with no Reply-To.
+        ...(row.html ? { html: row.html } : {}),
+        ...(row.replyTo ? { replyTo: row.replyTo } : {}),
+      });
       await prisma.notificationOutbox.update({
         where: { id: row.id },
         data: { status: "SENT", sentAt: new Date(), attempts: row.attempts + 1, lastError: null },

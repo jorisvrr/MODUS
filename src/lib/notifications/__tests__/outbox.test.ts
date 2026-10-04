@@ -14,6 +14,9 @@ type Row = {
   recipient: string;
   subject: string;
   body: string;
+  html: string | null;
+  replyTo: string | null;
+  kind: string;
   status: string;
   attempts: number;
   lastError: string | null;
@@ -33,6 +36,8 @@ const prismaMock = {
       }
       const row = {
         id: `o${rows.length + 1}`,
+        html: null,
+        replyTo: null,
         status: "PENDING",
         attempts: 0,
         lastError: null,
@@ -70,9 +75,11 @@ vi.mock("../mailer", () => ({
   isMailConfigured: () => isMailConfigured(),
 }));
 
-const { enqueueSubmissionNotification, dispatchPending, buildSubmissionEmail } = await import(
-  "../outbox"
-);
+const { enqueueSubmissionNotification, enqueueDiagnosticEmails, dispatchPending, buildSubmissionEmail } =
+  await import("../outbox");
+const { base } = await import("../email/__tests__/fixtures");
+
+const ORIGIN = "https://www.withmodus.co";
 
 const notification = {
   diagnosticId: "diag_1",
@@ -213,5 +220,98 @@ describe("the email itself", () => {
     });
     expect(subject).not.toContain("\n");
     expect(subject).not.toContain("\r");
+  });
+});
+
+
+describe("a submission produces two independent mails", () => {
+  it("enqueues a confirmation to the customer and a notification to MODUS", async () => {
+    await enqueueDiagnosticEmails(base, "nl", ORIGIN);
+
+    expect(rows).toHaveLength(2);
+    const customer = rows.find((r) => r.kind === "diagnostic.received")!;
+    const admin = rows.find((r) => r.kind === "diagnostic.submitted")!;
+
+    expect(customer.recipient).toBe(base.email);
+    // Never the customer's address: it is centralised server-side
+    // configuration, or every form becomes an open relay.
+    expect(admin.recipient).not.toBe(base.email);
+    expect(customer.dedupeKey).not.toBe(admin.dedupeKey);
+  });
+
+  it("keeps the internal notification's dedupe key unchanged", async () => {
+    // A half-deployed state must not be able to send two internal
+    // notifications for one submission.
+    await enqueueDiagnosticEmails(base, "nl", ORIGIN);
+    expect(rows.find((r) => r.kind === "diagnostic.submitted")!.dedupeKey).toBe(
+      `diagnostic.submitted:${base.id}`
+    );
+  });
+
+  it("stores both parts and a reply address", async () => {
+    await enqueueDiagnosticEmails(base, "nl", ORIGIN);
+    for (const row of rows) {
+      expect(row.body.length).toBeGreaterThan(40);
+      expect(row.html).toContain("<!doctype html>");
+      expect(row.replyTo).toBeTruthy();
+    }
+  });
+
+  it("a failing customer mail does NOT resend the internal notification", async () => {
+    await enqueueDiagnosticEmails(base, "nl", ORIGIN);
+    // The customer's provider rejects; MODUS's own address is fine.
+    sendMail.mockImplementation(async ({ to }: { to: string }) => {
+      if (to === base.email) throw new Error("mailbox full");
+    });
+
+    await dispatchPending();
+    await dispatchPending();
+
+    const toAdmin = sendMail.mock.calls.filter(([m]) => (m as { to: string }).to !== base.email);
+    expect(toAdmin, "the internal notification should be sent exactly once").toHaveLength(1);
+    // And the customer row is still retrying on its own counter.
+    const customer = rows.find((r) => r.kind === "diagnostic.received")!;
+    const admin = rows.find((r) => r.kind === "diagnostic.submitted")!;
+    expect(customer.status).toBe("PENDING");
+    expect(customer.attempts).toBeGreaterThan(0);
+    expect(admin.status).toBe("SENT");
+    expect(admin.attempts).toBe(1);
+  });
+
+  it("enqueues both exactly once however often the event is replayed", async () => {
+    await enqueueDiagnosticEmails(base, "nl", ORIGIN);
+    await enqueueDiagnosticEmails(base, "nl", ORIGIN);
+    await enqueueDiagnosticEmails(base, "nl", ORIGIN);
+    expect(rows).toHaveLength(2);
+  });
+
+  it("composes at enqueue time, so a retry sends what was written then", async () => {
+    await enqueueDiagnosticEmails(base, "nl", ORIGIN);
+    const stored = rows.find((r) => r.kind === "diagnostic.received")!.html;
+    sendMail.mockRejectedValueOnce(new Error("down"));
+    await dispatchPending();
+    rows.forEach((r) => {
+      r.nextAttemptAt = new Date(0);
+    });
+    sendMail.mockReset();
+    await dispatchPending();
+    const sentHtml = (sendMail.mock.calls.find(([m]) => (m as { to: string }).to === base.email)?.[0] as
+      | { html?: string }
+      | undefined)?.html;
+    expect(sentHtml).toBe(stored);
+  });
+});
+
+describe("rows written before HTML mail existed still send", () => {
+  it("sends the text part alone, with no Reply-To", async () => {
+    // The deprecated text-only path, which is what those rows look like.
+    await enqueueSubmissionNotification(notification);
+    await dispatchPending();
+
+    expect(sendMail).toHaveBeenCalledTimes(1);
+    const sent = sendMail.mock.calls[0][0] as Record<string, unknown>;
+    expect(sent.text).toContain("Acme BV");
+    expect(sent).not.toHaveProperty("html");
+    expect(sent).not.toHaveProperty("replyTo");
   });
 });

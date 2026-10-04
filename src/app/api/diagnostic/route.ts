@@ -2,7 +2,8 @@ import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { after } from "next/server";
-import { dispatchPending, enqueueSubmissionNotification } from "@/lib/notifications/outbox";
+import { dispatchPending, enqueueDiagnosticEmails } from "@/lib/notifications/outbox";
+import { LOCALE_COOKIE, isLocale } from "@/lib/i18n/config";
 import { SITE_ORIGIN } from "@/lib/legal/site";
 import {
   legacyDependency,
@@ -94,6 +95,23 @@ const submissionSchema = z.object({
   utmMedium: z.string().max(100).optional().default(""),
   utmCampaign: z.string().max(100).optional().default(""),
 });
+
+/**
+ * Reads back a column that stores a JSON array as text.
+ *
+ * Tolerant on purpose: this runs AFTER the row is committed, to compose a
+ * notification. A malformed column must cost a line in an email, never the
+ * saved submission.
+ */
+function parseJsonArray(value: string | null): string[] {
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed.filter((v): v is string => typeof v === "string") : [];
+  } catch {
+    return [];
+  }
+}
 
 export async function POST(request: NextRequest) {
   const body = await request.json().catch(() => null);
@@ -258,15 +276,45 @@ export async function POST(request: NextRequest) {
   // Enqueue AFTER the record is committed. A mail problem must never tell
   // the visitor their submission failed when it is safely saved, nor push
   // them into resubmitting.
-  await enqueueSubmissionNotification({
-    diagnosticId: diagnostic.id,
-    companyName: diagnostic.companyName,
-    contactName: `${diagnostic.firstName} ${diagnostic.lastName}`.trim(),
-    contactEmail: diagnostic.email,
-    formType: "diagnostic submission",
-    submittedAt: diagnostic.createdAt,
-    adminUrl: `${SITE_ORIGIN}/private/diagnostics/${diagnostic.id}`,
-  });
+  //
+  // The confirmation is written in the language the visitor was reading
+  // the site in. The cookie the language switch already sets is the
+  // existing record of that choice, so it is read rather than a second one
+  // invented; absent or unrecognised, it falls back to the site default
+  // instead of guessing from a header.
+  const cookieLocale = request.cookies.get(LOCALE_COOKIE)?.value;
+  const locale = isLocale(cookieLocale) && cookieLocale === "nl" ? "nl" : "en";
+
+  await enqueueDiagnosticEmails(
+    {
+      id: diagnostic.id,
+      firstName: diagnostic.firstName,
+      lastName: diagnostic.lastName,
+      companyName: diagnostic.companyName,
+      email: diagnostic.email,
+      phone: diagnostic.phone ?? "",
+      primaryInterest: diagnostic.primaryInterest ?? "",
+      priorities: parseJsonArray(diagnostic.priorities),
+      problemDescription: diagnostic.problemDescription,
+      industry: diagnostic.industry,
+      employees: diagnostic.employees,
+      locations: diagnostic.locations,
+      reachChannels: parseJsonArray(diagnostic.customerChannels),
+      systems: parseJsonArray(diagnostic.systems),
+      connectionLevel: diagnostic.systemConnectivity,
+      adminHours: diagnostic.adminWorkload,
+      friction: parseJsonArray(diagnostic.frictionAreas),
+      primaryPain: diagnostic.primaryPainPoint,
+      timing: diagnostic.timing,
+      estimateMin: diagnostic.calculatedEstimateMin,
+      estimateMax: diagnostic.calculatedEstimateMax,
+      pricingBand: diagnostic.pricingBand ?? "",
+      manualScopeRequired: diagnostic.manualScopeRequired,
+      submittedAt: diagnostic.createdAt,
+    },
+    locale,
+    SITE_ORIGIN
+  );
 
   // Prompt delivery, off the response path.
   //

@@ -2387,3 +2387,154 @@ No production submission, no test mail, no membership change.
 `productionGraphic.spec.ts` was updated to the new design and passes
 locally; it asserts the deployed site and will only hold there once this
 work is deployed.
+
+## 41. Two automatic emails on a saved diagnostic — 4 October 2026
+
+### What the flow already did, and what changed
+
+A submission committed, then enqueued **one** plain-text internal
+notification. `dispatchPending` sent it, retried with exponential backoff
+up to five attempts, and `dedupeKey` made the event idempotent. `after()`
+drove a prompt send off the response path and a cron swept the rest.
+
+That ordering is the part worth keeping and it is untouched: mail is
+still never on the critical path of a save. What changed is that a
+submission now produces **two** mails, each with an HTML and a text part.
+
+### The two mails
+
+**To the person who filled it in** — *"We hebben je antwoorden ontvangen
+· MODUS"*, in the language they were reading the site in. It says their
+answers are in, what they said they most want to improve, that it will be
+read, and that a conversation follows. It promises **no** response time
+and claims **no** finished analysis, and the tests assert both.
+
+Missing information is left out, never shown. No company name means the
+sentence does not mention one; no stated priority means that sentence is
+not there at all. A mail that says "your answers for [bedrijf]" is worse
+than one that says less.
+
+**To MODUS** — *"Nieuwe diagnose: [bedrijf]"*, to the configured internal
+address, never one taken from the form. It leads with name, company,
+email and phone and the **Open in MODUS** button, then what they want to
+improve in their own words, then team size, tools and context, then the
+stored price indication, the receipt time in Europe/Amsterdam and the
+reference. A section whose rows are all empty disappears, heading
+included — a heading over a blank is the empty space to avoid.
+
+The price indication is labelled as one, and carries *"komt uit het
+prijsmodel en is een indicatie, geen offerte"*. Where the model declined
+to price the scope it says so rather than implying zero.
+
+The link is a plain `/private/diagnostics/{id}`. Normal admin
+authentication, no token, no bypass, no query string — a link that let its
+holder in would make every forwarded notification a key.
+
+### Independence, which is the reliability requirement
+
+Two rows, two dedupe keys, two attempt counters, two backoff schedules,
+and a dispatch loop that catches per row. A customer address that bounces
+retries only the customer mail and can never cause the internal
+notification to go out twice. Asserted directly: with the customer's
+provider rejecting and MODUS's accepting, two dispatch passes send the
+internal notification exactly once while the customer row keeps its own
+PENDING state and its own attempt count.
+
+The internal mail's dedupe key is **unchanged** from the text-only
+version, so a half-deployed state cannot produce two notifications for
+one submission.
+
+Both mails are composed at **enqueue** time and stored, so a retry hours
+later sends what was written then rather than re-rendering against a
+record a reviewer has since edited. Asserted.
+
+A mail failure still cannot present a saved diagnostic as a failed
+submission: enqueueing never throws into the request path, and the
+response is already sent before dispatch runs.
+
+### Reusable, without building the weekly mail
+
+A mail is a list of blocks — paragraph, heading, section, facts, button,
+divider, note, signature — and the HTML and text renderers walk the same
+list. Writing each mail twice by hand is how the two parts drift, and a
+text part that disagrees with the HTML part is worse than none.
+
+That is also what weekly mails would need: a different list of the same
+blocks, not a different shell. **Nothing weekly is built**: no schedule,
+no subscription, no additional sending.
+
+### Design
+
+`public/brand/email-header-v1.jpg` — 1200×400, displayed at 600, 20KB.
+Versioned in the filename because mail clients and their image proxies
+cache by URL, so replacing the artwork means a new file. The supplied PNG
+was 892KB; as a JPEG at q90 the same image is 20KB, because its "flat"
+green is textured (53 distinct colours in one sampled patch) and that is
+what PNG is bad at.
+
+The alt text is styled white on a green cell, so with images blocked the
+header reads as the word MODUS rather than 200 pixels of nothing.
+
+Below it: warm cream surface, dark text, green actions, compact
+paragraphs, a quiet footer with website, contact and the existing privacy
+link. Tables with `role="presentation"`, inline styles, widths as
+attributes — strip the one `<style>` block and the layout still holds. No
+external stylesheet, script or font. One logo, asserted.
+
+**No tracking.** No open or click tracking is requested of the provider,
+so no link is rewritten, and every link is asserted to carry no query
+parameters, no `utm_`, and nothing identifying the recipient.
+
+### Escaping
+
+Everything submitted is escaped into the HTML part — there is no React
+here, these strings are built by hand, which is exactly why it is
+explicit. A `<script>` tag in a company name renders as text. The **text**
+part is deliberately not escaped: it is not markup, and escaping it would
+corrupt the person's own words. Subjects have CR/LF stripped, so no extra
+mail header can be injected.
+
+### Verified
+
+**Unit — 178 tests, all passing**, including 45 for the mail: omission
+without placeholders, priority fallback, both languages, no promised
+response time, the estimate as an indication, the empty section dropped,
+Europe/Amsterdam, escaping in HTML and verbatim text, header injection,
+the `/private` link granting nothing, no personal data in links, and the
+outbox's independence and compose-once properties.
+
+**Previews** — `npx vitest run src/lib/notifications/email` writes twelve
+cases to `email-previews/` as HTML and text, plus an index: both
+languages, a long submission, a sparse one, a priority stated only
+through the list, a scope the model would not price, and an injection
+attempt. They are rendered by the same modules that send, so they cannot
+drift from what would go out. Set `MODUS_EMAIL_PREVIEW_ORIGIN` to render
+against a running dev server, where the header image resolves.
+
+**The real flow, locally** — a submission through the actual API with
+`modus_locale=nl` produced exactly two rows: `diagnostic.received` to the
+submitter, Dutch, reply-to `joris@withmodus.co`, 4.4KB of HTML; and
+`diagnostic.submitted` to the configured internal address, reply-to the
+submitter, 13KB of HTML. Repeating with `modus_locale=en` produced the
+English confirmation. Both stayed `PENDING` with zero attempts, because
+no provider is configured locally — the dispatcher said so explicitly
+rather than pretending to deliver. **No mail was sent anywhere.**
+
+### Configuration needed before this does anything
+
+| Variable | Status | Note |
+|---|---|---|
+| `RESEND_API_KEY` | already set in Vercel | unchanged |
+| `MAIL_FROM` | already set in Vercel | **the verified sending domain — not changed here** |
+| `FORM_NOTIFICATION_TO` | optional | defaults to `hello@withmodus.co` |
+| `NEXT_PUBLIC_SITE_ORIGIN` | optional | defaults to `https://www.withmodus.co`; the header image and the admin link are built from it |
+
+The sending domain was **not** changed, and nothing here picks a From
+address: it is `MAIL_FROM`, configuration, as before. A submitter's
+address goes in Reply-To only.
+
+One migration ships with this: `20261004120000_outbox_html_and_replyto`
+adds two **nullable** columns to `NotificationOutbox`. Nullable because
+rows enqueued before this existed have neither and must keep sending —
+the dispatcher falls back to the text part alone and omits Reply-To,
+which is asserted. Applied locally; **not applied to production.**

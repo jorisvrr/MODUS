@@ -242,7 +242,17 @@ model NotificationOutbox {
   dedupeKey  String @unique
   recipient  String
   subject    String
+  /// The plain-text part. Required: every mail has one, and rows written
+  /// before the HTML part existed have only this.
   body       String
+  /// The HTML part, rendered at enqueue time so a retry sends the message
+  /// that was composed then rather than re-rendering against a record that
+  /// may have moved on. Null for rows from before HTML mail, which still
+  /// send correctly as text.
+  html       String?
+  /// Where a reply should go — the customer for an internal notification,
+  /// MODUS for a customer confirmation. Never used as the From address.
+  replyTo    String?
 
   status     String @default("PENDING") // PENDING, SENT, FAILED
   attempts   Int    @default(0)
