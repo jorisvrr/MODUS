@@ -15,7 +15,7 @@ import { TASK_CONSISTENCY_OPTIONS, ABSENCE_COVERAGE_OPTIONS } from "./operations
  * must not arrive downstream looking like a low score.
  */
 
-const UNKNOWN_INDEX = 3;
+export const UNKNOWN_INDEX = 3;
 
 function indexOfAnswer(options: readonly string[], answer: string): number {
   return options.findIndex((option) => option === answer);

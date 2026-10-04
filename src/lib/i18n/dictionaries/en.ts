@@ -179,7 +179,6 @@ export const en = {
 
   diagnosticShell: {
     label: "MODUS / Business Diagnostic",
-    hintPrefix: "Continuing from",
     introTitle: "Let's understand how your business works.",
     introBody:
       "Answer a few questions about your company, systems and current friction. MODUS will use your answers to build an initial business profile and identify where deeper analysis may be valuable.",
@@ -204,10 +203,6 @@ export const en = {
       "What matters most right now?",
       "Where should MODUS send your profile?",
     ],
-    // Short forms of stepHeadlines, for the diagnostic scene's projected
-    // labels. Same six topics, same order — abbreviated because a full
-    // question does not fit on a floating chip.
-    stepTopics: ["Business", "Customers", "Systems", "Friction", "Priorities", "Contact"],
     profileReady: {
       label: "PROFILE READY",
       loading: "Loading your profile…",
@@ -500,20 +495,103 @@ export const en = {
     holdComplete: "Diagnostic Received",
   },
 
-  diagnosticProfilePanel: {
-    label: "MODUS / Initial Profile",
-    emptyProfile: "Your profile will build here as you answer.",
-    preliminarySignals: "Preliminary Signals",
-    emptySignals: "MODUS is watching for signals as you answer.",
-    factIndustry: "Industry",
-    factTeam: "Team",
-    factLocations: "Locations",
-    factSystems: "Systems",
-    factSystemsIdentified: "identified",
-    factManualWork: "Manual Work",
-    factPrimaryFriction: "Primary Friction",
-    factFriction: "Friction",
-    factDependency: "Dependency",
+  /*
+   * The words beside the diagnostic's composition. Two distinct jobs:
+   * `topics[].purpose` is authored copy explaining WHY a topic is asked
+   * about, and `facts` are labels for the visitor's own answers. Nothing
+   * here draws a conclusion — the signals engine does that on the result
+   * screen, after a real submission.
+   */
+  diagnosticGraphic: {
+    purposeLabel: "Why we ask",
+    entryTitle: "Six topics make one picture.",
+    entryBody:
+      "MODUS reads a business as a whole, so the questions cover how customers reach you and what you run on \u2014 not only what is going wrong. Each topic you answer draws another part of the picture.",
+    topics: [
+      {
+        name: "Business",
+        purpose:
+          "Size, sector and locations set what counts as normal here. The same friction means different things in a two-person shop and a four-branch operation.",
+      },
+      {
+        name: "Customers",
+        purpose:
+          "How work arrives, and how much of it is moved by hand. This is usually where recoverable time is hiding.",
+      },
+      {
+        name: "Systems",
+        purpose:
+          "What you run on, and whether those tools talk to each other. Disconnected systems are the common reason work gets done twice.",
+      },
+      {
+        name: "Friction",
+        purpose:
+          "Where the work is harder than it should be. Knowing which part hurts most is what keeps the first fix from being a guess.",
+      },
+      {
+        name: "Priorities",
+        purpose:
+          "What you want changed, and by when. This sets the order of the work, not whether it is possible.",
+      },
+      {
+        name: "Contact",
+        purpose:
+          "Where your profile should go. Nothing is sent anywhere until you submit.",
+      },
+    ],
+    recordedLabel: "Recorded so far",
+    recordedCount: (filled: number, total: number) =>
+      `${filled} of ${total} topics recorded`,
+    reviewLabel: "The whole picture",
+    reviewBody: "Grouped the way MODUS reads it.",
+    groups: [
+      { name: "Your work", body: "What the business is and how it runs." },
+      { name: "What gets in the way", body: "The friction you pointed at." },
+      { name: "What matters first", body: "What you want changed, and when." },
+    ],
+    groupRecorded: (n: number) =>
+      `${n} ${n === 1 ? "answer" : "answers"} recorded`,
+    submittingNote: "Sending. Nothing is confirmed until MODUS has it.",
+    savedLabel: "Recorded",
+    savedTitle: "Your answers are stored with MODUS.",
+    savedBody:
+      "The picture is complete. What follows is an initial reading of it, not a full diagnosis.",
+    facts: {
+      company: "Company",
+      industry: "Industry",
+      team: "Team",
+      locations: "Locations",
+      channels: "Customers reach you via",
+      handling: "Enquiries handled",
+      manualWork: "Manual work",
+      consistency: "Recurring tasks",
+      coverage: "Cover when away",
+      systems: "Systems",
+      systemsIdentified: "identified",
+      connected: "Connected",
+      spreadsheets: "Spreadsheets",
+      automation: "Automation",
+      friction: "Friction",
+      primaryFriction: "Hurts most",
+      frequency: "Frequency",
+      impact: "Impact",
+      interest: "Interested in",
+      priorities: "Priorities",
+      timing: "Timing",
+      role: "Role",
+      sendTo: "Send to",
+    },
+  },
+
+  diagnosticStartContext: {
+    label: "You started with",
+    note: "Carried over from the homepage. Edit it, or clear it \u2014 it is not an answer to any question yet.",
+    textLabel: "What you would like to improve",
+    textPlaceholder: "Edit what you wrote, or clear it",
+    removeTopic: "Remove",
+    clear: "Clear this",
+    useAsDescription: "Use this as my description",
+    used: "Added to the field below.",
   },
 
   diagnosticProgress: {
@@ -594,10 +672,6 @@ export const en = {
     },
   },
 
-  diagnosticSystemMap: {
-    businessLabel: "Business",
-    placeholderCategories: ["Operations", "Customers", "Systems", "Data", "Revenue", "Automation"],
-  },
 
   diagnosticWarpDetail: {
     label: "Signal / Preliminary",
@@ -836,9 +910,24 @@ export const en = {
     },
     diagnosticEntry: {
       label: "Start Here",
-      heading: "What could work better?",
-      placeholder: "Tell us where your business is getting stuck…",
-      categories: ["Website", "Leads", "Processes", "Growth", "Not sure yet"],
+      heading: "What is taking more time than it should?",
+      description:
+        "One line is enough. It shapes the questions the diagnostic asks you next.",
+      fieldLabel: "What would you like to improve?",
+      placeholder: "e.g. quotes take two days to go out",
+      chipsLabel: "Or pick what is closest",
+      categories: [
+        "Following up with customers",
+        "Planning work",
+        "Repetitive admin",
+        "Getting more enquiries",
+        "Not sure yet",
+      ],
+      // Selecting this clears the others, and any other clears it: "not
+      // sure yet" next to three specific answers contradicts itself.
+      exclusiveCategory: "Not sure yet",
+      cta: "Find my next step",
+      ctaNote: "No account needed to start.",
     },
     process: {
       label: "The MODUS Loop",

@@ -1,14 +1,12 @@
 "use client";
 
 import { useEffect, useRef, useState, type CSSProperties } from "react";
-import { useSearchParams } from "next/navigation";
 import { motion } from "motion/react";
 import { ArrowLeft, ArrowRight } from "lucide-react";
 import { Container } from "@/components/ui/Container";
 import { SectionLabel } from "@/components/ui/SectionLabel";
 import { Reveal } from "@/components/ui/Reveal";
 import { MagneticButton } from "@/components/ui/MagneticButton";
-import { SystemMap } from "@/components/diagnostic/SystemMap";
 import { ProgressBar } from "@/components/diagnostic/ProgressBar";
 import { ReviewScreen } from "@/components/diagnostic/ReviewScreen";
 import { SubmitTransition } from "@/components/diagnostic/SubmitTransition";
@@ -18,7 +16,8 @@ import { ProfileReadyScreen } from "@/components/diagnostic/ProfileReadyScreen";
 import { useDict } from "@/lib/i18n/context";
 import { useMediaQuery } from "@/lib/useMediaQuery";
 import { useIdentity } from "@/components/auth/IdentityProvider";
-import { DiagnosticProfile } from "@/components/diagnostic/DiagnosticProfile";
+import { DiagnosticExplainer } from "@/components/diagnostic/DiagnosticExplainer";
+import { StartContextPanel } from "@/components/diagnostic/StartContextPanel";
 import { StepBusiness } from "@/components/diagnostic/StepBusiness";
 import { StepOperations } from "@/components/diagnostic/StepOperations";
 import { StepSystems } from "@/components/diagnostic/StepSystems";
@@ -40,6 +39,13 @@ import {
   clearDiagnosticState,
 } from "@/lib/diagnostic/storage";
 import { buildProfileIndicators, buildSignals } from "@/lib/diagnostic/rules";
+import {
+  type EntryContext,
+  clearEntryContext,
+  loadEntryContext,
+  purgeForeignEntryContext,
+  saveEntryContext,
+} from "@/lib/diagnostic/entryContext";
 import { submitDiagnostic } from "@/lib/diagnostic/submit";
 import {
   saveContextReference,
@@ -140,11 +146,6 @@ export function DiagnosticShell() {
   const wideEnoughForGutterScene = useMediaQuery("(min-width: 1280px)");
   const STEP_LABELS = dict.diagnosticShell.stepLabels;
   const STEP_HEADLINES = dict.diagnosticShell.stepHeadlines;
-  // Section 13 — a purely visual, non-authoritative echo of the homepage
-  // category chip (if the visitor arrived via `DiagnosticEntry`'s
-  // `?hint=`). Read once on mount; never written to sessionStorage, never
-  // consulted by `canProceed` or any step component.
-  const entryHint = useSearchParams().get("hint");
   const [resumedState] = useState(resumableState);
   const [screen, setScreen] = useState<Screen>(() =>
     initialScreen(!!resumedState, identity),
@@ -161,6 +162,81 @@ export function DiagnosticShell() {
   const [errors, setErrors] = useState<Record<string, string | null>>({});
   const [showRecoveryPrompt, setShowRecoveryPrompt] = useState(!!resumedState);
   const [resumed, setResumed] = useState(false);
+
+  /*
+   * What the visitor wrote on the homepage, carried here as START CONTEXT
+   * — shown, editable, and never an answer.
+   *
+   * Read lazily on the first render rather than in an effect, so it is
+   * there for the entry screen's first paint instead of appearing a frame
+   * later. `identity` is null until Clerk resolves, and `loadEntryContext`
+   * returns nothing for a null identity, so a signed-in visitor's own
+   * context arrives via the effect below once the account is known — which
+   * is exactly the ordering that keeps one account's words from flashing
+   * up for another.
+   */
+  const [startContext, setStartContext] = useState(() => loadEntryContext(identity));
+  const settledStartContext = useRef(false);
+  useEffect(() => {
+    if (!identity) return;
+    // Somebody else's words do not stay readable in this browser.
+    purgeForeignEntryContext(identity);
+    if (settledStartContext.current) return;
+    settledStartContext.current = true;
+    setStartContext((current) => current ?? loadEntryContext(identity));
+  }, [identity]);
+
+
+  /*
+   * Edits are written back, not only held in state. "Editable" has to
+   * survive a reload, or the visitor corrects their sentence, the page
+   * reloads, and the original is back — which reads as the edit having
+   * been ignored.
+   *
+   * Written under the record's OWN identity rather than the current one:
+   * the record was only loaded because those matched, and reading
+   * `identity` again here would write "guest" if Clerk happened to be
+   * mid-refresh.
+   */
+  function persistStartContext(next: EntryContext | null) {
+    if (!next) {
+      clearEntryContext();
+      setStartContext(null);
+      return;
+    }
+    const saved = saveEntryContext(next.topics, next.text, next.identity);
+    // `saveEntryContext` returns null when there is nothing left to carry.
+    setStartContext(saved ? { ...saved, text: next.text } : null);
+  }
+
+  function removeStartTopic(topic: string) {
+    if (!startContext) return;
+    persistStartContext({
+      ...startContext,
+      topics: startContext.topics.filter((x) => x !== topic),
+    });
+  }
+
+  function changeStartText(value: string) {
+    if (!startContext) return;
+    persistStartContext({ ...startContext, text: value });
+  }
+
+  function clearStartContext() {
+    persistStartContext(null);
+  }
+
+  /*
+   * The ONE path from start context into a real answer, and it is a press.
+   * `problemDescription` is the optional free-text question that asks the
+   * same thing the homepage field asked, so this is a copy into the field
+   * the visitor can see, not a hidden write to an unrelated question.
+   */
+  function useStartTextAsDescription() {
+    const text = startContext?.text.trim();
+    if (!text) return;
+    update("problemDescription", text);
+  }
 
   // A stored token that no longer resolves (dev database reset, revoked,
   // malformed) falls back to the generic intro automatically — never gets
@@ -331,6 +407,11 @@ export function DiagnosticShell() {
       saveContextReference(result.contextToken, answers.companyName, identity ?? "guest");
     }
     clearDiagnosticState();
+    // The homepage context has done its job once the real answers are
+    // filed. Leaving it would offer "you started with…" again to whoever
+    // opens the diagnostic next in this tab.
+    clearEntryContext();
+    setStartContext(null);
     setScreen("result");
   }
 
@@ -389,7 +470,7 @@ export function DiagnosticShell() {
         // The sphere is the entry screen's subject, so it takes the right
         // column at full strength.
         return wideEnoughForScene
-          ? { band: "top-24", size: "h-[min(62vh,540px)] w-[48%]" }
+          ? { band: "top-24", size: "h-[min(74vh,640px)] w-[48%]" }
           : null;
       case "form":
         /*
@@ -415,8 +496,12 @@ export function DiagnosticShell() {
       case "submit_error":
         // The review column is `max-w-2xl` and centred; the scene sits in
         // the gutter beside it, never over it.
+        // Taller than the canvas alone needed: the three review groups
+        // are written out beside it, and a 400px box cut the third one
+        // off. The width is still the gutter's, so nothing moves closer
+        // to the review column.
         return wideEnoughForGutterScene
-          ? { band: "top-28", size: "h-[min(46vh,400px)] w-[30%]" }
+          ? { band: "top-28", size: "h-[min(62vh,560px)] w-[30%]" }
           : null;
       case "result":
         // The estimate is dense and its numbers must stay readable, so
@@ -433,7 +518,7 @@ export function DiagnosticShell() {
         return wideEnoughForScene
           ? {
               band: "top-1/2 -translate-y-1/2",
-              size: "h-[min(56vh,480px)] w-[48%]",
+              size: "h-[min(60vh,520px)] w-[48%]",
             }
           : null;
       default:
@@ -495,14 +580,14 @@ export function DiagnosticShell() {
            */}
           <Container>
             <div className={`ml-auto ${scenePlacement.size}`} style={scenePlacement.sizeStyle}>
-              <DiagnosticProfile
+              <DiagnosticExplainer
                 screen={screen}
                 step={step}
                 answers={answers}
-                labels={dict.diagnosticShell.stepTopics}
-                // The readout is the answering stages' business; the
-                // entry sphere and the closing compositions stand alone.
-                showReadout={screen === "form"}
+                withScene
+                // See DiagnosticExplainer's `showText`: the estimate
+                // screen's only free strip is too narrow to read in.
+                showText={screen !== "result"}
                 className="h-full w-full"
               />
             </div>
@@ -523,13 +608,6 @@ export function DiagnosticShell() {
                   {dict.diagnosticShell.label}
                 </SectionLabel>
               </Reveal>
-              {entryHint && (
-                <Reveal delay={0.03}>
-                  <p className="mt-4 font-mono text-[10px] uppercase tracking-[0.08em] text-muted">
-                    {dict.diagnosticShell.hintPrefix} &middot; {entryHint}
-                  </p>
-                </Reveal>
-              )}
               <Reveal delay={0.06}>
                 <h1 className="mt-5 text-balance text-display-md font-semibold text-ink">
                   {dict.diagnosticShell.introTitle}
@@ -540,6 +618,26 @@ export function DiagnosticShell() {
                   {dict.diagnosticShell.introBody}
                 </p>
               </Reveal>
+
+              {/*
+                * What they wrote on the homepage, shown back to them
+                * before anything is asked again — the replacement for the
+                * old one-line `?hint=` echo, which could only ever show a
+                * single category and never their own words.
+                */}
+              {startContext && (
+                <Reveal delay={0.16}>
+                  <StartContextPanel
+                    variant="intro"
+                    topics={startContext.topics}
+                    text={startContext.text}
+                    onRemoveTopic={removeStartTopic}
+                    onChangeText={changeStartText}
+                    onClear={clearStartContext}
+                    className="mt-7"
+                  />
+                </Reveal>
+              )}
 
               <Reveal delay={0.18}>
                 <div className="mt-6 flex flex-wrap items-center gap-4 font-mono text-[10px] uppercase tracking-[0.08em] text-muted">
@@ -575,13 +673,22 @@ export function DiagnosticShell() {
             </div>
 
             {/*
-             * The empty SystemMap placeholder used to sit here, inside a
-             * Reveal. At entry it drew a node diagram with nothing in it
-             * yet, competing with the new sphere for the same space and
-             * saying less. The sphere now owns the entry screen; SystemMap
-             * is retained on the form screen, where it actually fills in
-             * from the visitor's answers.
+             * Below the desktop threshold there is no canvas — so the
+             * explanation is rendered on its own here, as ordinary text in
+             * the page flow. A phone should spend its room on words, and
+             * the words are the half that carries the information.
              */}
+            {!wideEnoughForScene && (
+              <Reveal delay={0.1}>
+                <DiagnosticExplainer
+                  screen={screen}
+                  step={step}
+                  answers={answers}
+                  withScene={false}
+                  className="rounded-md border border-line bg-mineral/50 p-5"
+                />
+              </Reveal>
+            )}
           </Container>
         </motion.div>
       )}
@@ -601,6 +708,18 @@ export function DiagnosticShell() {
             )}
             <ProgressBar step={step} />
 
+            {/* No canvas at this width; the explanation stands on its own,
+                above the question it explains. */}
+            {!wideEnoughForScene && (
+              <DiagnosticExplainer
+                screen={screen}
+                step={step}
+                answers={answers}
+                withScene={false}
+                className="mt-8 rounded-md border border-line bg-mineral/50 p-5"
+              />
+            )}
+
             <div className="mt-12 grid grid-cols-1 gap-14 lg:grid-cols-[1.3fr_1fr]">
               <div>
                 {/* Checkpoint 5: one continuous conversation, not a page
@@ -614,6 +733,17 @@ export function DiagnosticShell() {
                 <motion.div
                   key={step}
                   ref={stepHeadingRef}
+                  /*
+                   * A stable hook for the current step's own heading and
+                   * fields. The explanation beside the form legitimately
+                   * repeats words that appear in the questions — a summary
+                   * of "Locations" says "Locations" — so a test that looks
+                   * for question text by itself can match the summary
+                   * instead. Scoping to this element is what makes those
+                   * locators mean "the question", not "that word anywhere
+                   * on the page".
+                   */
+                  data-diagnostic-step={step}
                   initial={{ opacity: 0, y: 10, filter: "blur(4px)" }}
                   animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
                   transition={{ duration: 0.35, ease: [0.16, 1, 0.3, 1] }}
@@ -624,6 +754,30 @@ export function DiagnosticShell() {
                   >
                     {STEP_HEADLINES[step]}
                   </h2>
+                  {/*
+                   * The friction step is the one place the homepage text
+                   * can legitimately become an answer, because this step
+                   * asks the same question. It is offered, not applied:
+                   * "used" is derived from the field's actual value rather
+                   * than a flag, so editing or clearing the field puts the
+                   * offer back instead of leaving a stale confirmation.
+                   */}
+                  {step === 3 && startContext && startContext.text.trim().length > 0 && (
+                    <StartContextPanel
+                      variant="inline"
+                      topics={startContext.topics}
+                      text={startContext.text}
+                      onRemoveTopic={removeStartTopic}
+                      onChangeText={changeStartText}
+                      onClear={clearStartContext}
+                      onUseAsDescription={useStartTextAsDescription}
+                      used={
+                        answers.problemDescription.trim() === startContext.text.trim()
+                      }
+                      className="mt-6"
+                    />
+                  )}
+
                   <div className="mt-7">{stepComponents[step]}</div>
                 </motion.div>
 
@@ -699,6 +853,18 @@ export function DiagnosticShell() {
              * gutter for the scene.
              */}
             <div className="max-w-2xl">
+              {/* The three groups are the framing for this screen, so they
+                  must not be desktop-only: below the gutter threshold they
+                  appear above the list instead of beside it. */}
+              {!wideEnoughForGutterScene && (
+                <DiagnosticExplainer
+                  screen={screen}
+                  step={step}
+                  answers={answers}
+                  withScene={false}
+                  className="mb-10 rounded-md border border-line bg-mineral/50 p-5"
+                />
+              )}
               <ReviewScreen
                 answers={answers}
                 onEdit={(s) => {

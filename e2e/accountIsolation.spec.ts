@@ -159,3 +159,60 @@ test.describe("a guest's own work in progress survives", () => {
     await expect(page.getByLabel("Company name")).toHaveValue("Guest Draft Co");
   });
 });
+
+/**
+ * The homepage's start context is the visitor's own sentence about where
+ * their business is stuck, so it is scoped exactly like the saved
+ * reference above — and for the same reason. Unscoped, the next person at
+ * this browser would be greeted with the previous one's words.
+ */
+const ENTRY_KEY = "modus:entry-context:v1";
+
+async function seedEntryContext(page: Page, identity: string, text: string) {
+  await page.addInitScript(
+    ([key, value]) => window.sessionStorage.setItem(key, value),
+    [ENTRY_KEY, JSON.stringify({ topics: ["Planning work"], text, savedAt: Date.now(), identity })] as const
+  );
+}
+
+const storedEntry = (page: Page) =>
+  page.evaluate((k) => window.sessionStorage.getItem(k), ENTRY_KEY);
+
+test.describe("start context belonging to another account", () => {
+  const THEIRS = "our quoting is a mess and only Marco can do it";
+
+  test("is not shown to the next person at this browser", async ({ page }) => {
+    await seedEntryContext(page, "user_someone_else", THEIRS);
+
+    await page.goto("/diagnostic");
+    await page.waitForLoadState("networkidle");
+
+    await expect(page.getByText("You started with")).toHaveCount(0);
+    await expect(page.locator("body")).not.toContainText(THEIRS);
+  });
+
+  test("is removed from storage, not merely ignored", async ({ page }) => {
+    await seedEntryContext(page, "user_someone_else", THEIRS);
+
+    await page.goto("/diagnostic");
+    await page.waitForLoadState("networkidle");
+
+    // Leaving it readable would mean anyone with the device could read the
+    // previous account's words straight out of storage.
+    await expect.poll(() => storedEntry(page), { timeout: 5000 }).toBeNull();
+  });
+
+  test("the current identity's own start context is still honoured", async ({ page }) => {
+    // The half that matters just as much: a change that simply broke the
+    // feature would pass both tests above on its own.
+    await seedEntryContext(page, "guest", "planning the week takes a whole morning");
+
+    await page.goto("/diagnostic");
+    await page.waitForLoadState("networkidle");
+
+    await expect(page.getByText("You started with")).toBeVisible();
+    await expect(page.getByLabel("What you would like to improve")).toHaveValue(
+      "planning the week takes a whole morning"
+    );
+  });
+});

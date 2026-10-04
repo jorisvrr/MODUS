@@ -3,6 +3,7 @@ import path from "node:path";
 import { test, expect, type Page } from "@playwright/test";
 import { requireLocalMutableEnvironment } from "./localOnlyGuard";
 import { holdToSubmit } from "./holdToSubmit";
+import { clickFirstOptionNear } from "./diagnosticForm";
 
 /*
  * These tests write real rows to the database, so they refuse to run
@@ -18,11 +19,6 @@ requireLocalMutableEnvironment();
  * (Section 13), the submission-failure state (Section 19), and that the
  * diagnostic route's fluid field is disabled (Sections 14/22).
  */
-
-async function clickFirstOptionNear(page: Page, headingText: string) {
-  const heading = page.getByText(headingText, { exact: false }).first();
-  await heading.locator("xpath=following-sibling::div[1]").locator("button").first().click();
-}
 
 const FAIL_TEST_EMAIL = "submit-fail@playwright-qa.dev";
 
@@ -58,21 +54,149 @@ test("progress dots and step headline advance and retreat correctly", async ({ p
   await expect(page.getByLabel("Company name")).toHaveValue("Progress QA BV");
 });
 
-test("homepage diagnostic-entry category hint carries through as a non-authoritative visual note", async ({
+/**
+ * Part 5 — what the homepage's "Start here" collects, and what happens to
+ * it.
+ *
+ * The rules being asserted are the ones that make carrying it over safe:
+ * it is shown back, it is editable, it is never silently an answer, it
+ * never skips a required question, and it never travels in the URL.
+ */
+test("the homepage start context carries over, is editable, and is never an answer", async ({
   page,
 }) => {
   await page.goto("/");
-  const entryForm = page.locator("form").filter({ has: page.getByPlaceholder(/stuck/i) });
-  await entryForm.getByRole("button", { name: "Website", exact: true }).click();
-  await entryForm.getByRole("link", { name: "Run a Diagnostic" }).click();
+  const entryForm = page.locator("form").filter({ has: page.getByLabel(/What would you like to improve/i) });
 
-  await expect(page).toHaveURL(/\/diagnostic\?hint=Website/);
-  await expect(page.getByText("Continuing from", { exact: false }).first()).toBeVisible();
+  await entryForm.getByLabel(/What would you like to improve/i).fill("quotes take two days to go out");
+  await entryForm.getByRole("button", { name: "Planning work", exact: true }).click();
+  await entryForm.getByRole("button", { name: "Repetitive admin", exact: true }).click();
 
-  // Purely visual — never pre-answers a real step. Starting the diagnostic
-  // still lands on the unanswered first step.
+  // Multi-select, and the state is announced rather than only coloured.
+  await expect(entryForm.getByRole("button", { name: "Planning work", exact: true })).toHaveAttribute(
+    "aria-pressed",
+    "true"
+  );
+  await expect(entryForm.getByRole("button", { name: "Repetitive admin", exact: true })).toHaveAttribute(
+    "aria-pressed",
+    "true"
+  );
+
+  // "Not sure yet" is exclusive in both directions.
+  await entryForm.getByRole("button", { name: "Not sure yet", exact: true }).click();
+  await expect(entryForm.getByRole("button", { name: "Planning work", exact: true })).toHaveAttribute(
+    "aria-pressed",
+    "false"
+  );
+  await entryForm.getByRole("button", { name: "Planning work", exact: true }).click();
+  await expect(entryForm.getByRole("button", { name: "Not sure yet", exact: true })).toHaveAttribute(
+    "aria-pressed",
+    "false"
+  );
+
+  await entryForm.getByRole("link", { name: /Find my next step/i }).click();
+
+  // The free text is NOT in the URL. It is the visitor's own description
+  // of where their business is stuck; a URL is copied, pasted and logged.
+  await expect(page).toHaveURL(/\/diagnostic$/);
+  expect(page.url()).not.toContain("quotes");
+
+  // It is shown back, and it is editable.
+  await expect(page.getByText("You started with")).toBeVisible();
+  const carried = page.getByLabel("What you would like to improve");
+  await expect(carried).toHaveValue("quotes take two days to go out");
+  await expect(page.getByRole("button", { name: /Planning work/ })).toBeVisible();
+
+  // Starting still lands on an unanswered first step: nothing was
+  // pre-filled and no required question was skipped.
   await page.getByRole("button", { name: /Start|Begin/i }).first().click();
   await expect(page.getByLabel("Company name")).toHaveValue("");
+  await expect(page.getByText("01 / 06")).toBeVisible();
+});
+
+test("the carried text becomes an answer only when the visitor says so", async ({ page }) => {
+  await page.goto("/");
+  const entryForm = page.locator("form").filter({ has: page.getByLabel(/What would you like to improve/i) });
+  await entryForm
+    .getByLabel(/What would you like to improve/i)
+    .fill("following up on quotes eats a whole morning every week");
+  await entryForm.getByRole("link", { name: /Find my next step/i }).click();
+
+  await page.getByRole("button", { name: /Start|Begin/i }).first().click();
+  await page.getByLabel("Company name").fill("Carry QA BV");
+  await page.locator("select").first().selectOption({ index: 1 });
+  await clickFirstOptionNear(page, "Employees");
+  await clickFirstOptionNear(page, "Locations");
+  await page.getByRole("button", { name: /^Continue$/ }).click();
+  await clickFirstOptionNear(page, "reach you");
+  await page.getByRole("button", { name: /^Continue$/ }).click();
+  await clickFirstOptionNear(page, "runs your business");
+  await clickFirstOptionNear(page, "connected are these systems");
+  await page.getByRole("button", { name: /^Continue$/ }).click();
+
+  // The friction step asks the same question the homepage asked, so the
+  // text is offered here — and the description field is still empty until
+  // the offer is accepted.
+  const description = page.getByLabel("In your own words, what happens?");
+  await expect(description).toHaveValue("");
+  await page.getByRole("button", { name: /Use this as my description/i }).click();
+  await expect(description).toHaveValue("following up on quotes eats a whole morning every week");
+  await expect(page.getByText("Added to the field below.")).toBeVisible();
+});
+
+test("clearing the carried context removes it rather than hiding it", async ({ page }) => {
+  await page.goto("/");
+  const entryForm = page.locator("form").filter({ has: page.getByLabel(/What would you like to improve/i) });
+  await entryForm.getByRole("button", { name: "Getting more enquiries", exact: true }).click();
+  await entryForm.getByRole("link", { name: /Find my next step/i }).click();
+
+  await expect(page.getByText("You started with")).toBeVisible();
+  await page.getByRole("button", { name: /^Clear this$/ }).click();
+  await expect(page.getByText("You started with")).toHaveCount(0);
+
+  // Gone from storage too, so a reload does not bring it back.
+  await page.reload();
+  await expect(page.getByText("You started with")).toHaveCount(0);
+});
+
+test("the CTA works with nothing entered at all", async ({ page }) => {
+  // Both fields are optional. Someone who only knows that something is
+  // wrong must not be stopped at the door.
+  await page.goto("/");
+  const entryForm = page.locator("form").filter({ has: page.getByLabel(/What would you like to improve/i) });
+  await entryForm.getByRole("link", { name: /Find my next step/i }).click();
+  await expect(page).toHaveURL(/\/diagnostic$/);
+  await expect(page.getByText("You started with")).toHaveCount(0);
+  await page.getByRole("button", { name: /Start|Begin/i }).first().click();
+  await expect(page.getByText("01 / 06")).toBeVisible();
+});
+
+test("selecting a chip makes no request and saves nothing", async ({ page }) => {
+  /*
+   * MODUS's own endpoints only. Clerk's client library sends its own
+   * background environment calls on load, which have nothing to do with a
+   * chip being pressed — asserting on every non-GET request would be
+   * asserting on Clerk's behaviour and would fail for a reason the test
+   * does not care about.
+   */
+  const posts: string[] = [];
+  page.on("request", (r) => {
+    if (r.method() === "GET") return;
+    if (new URL(r.url()).host !== new URL(page.url() || "http://localhost").host) return;
+    posts.push(`${r.method()} ${r.url()}`);
+  });
+
+  await page.goto("/");
+  const entryForm = page.locator("form").filter({ has: page.getByLabel(/What would you like to improve/i) });
+  await entryForm.getByRole("button", { name: "Planning work", exact: true }).click();
+  await entryForm.getByLabel(/What would you like to improve/i).fill("typing without committing");
+  await page.waitForTimeout(600);
+
+  expect(posts, `a chip or a keystroke caused a request:\n${posts.join("\n")}`).toEqual([]);
+  // And nothing was written: navigating to the diagnostic directly, without
+  // pressing the CTA, carries nothing over.
+  await page.goto("/diagnostic");
+  await expect(page.getByText("You started with")).toHaveCount(0);
 });
 
 test("a failed submission shows a calm retry state, preserves answers, and a retry can then succeed", async ({

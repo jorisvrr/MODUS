@@ -1,6 +1,7 @@
 import { test, expect, type Locator, type Page } from "@playwright/test";
 import { requireLocalMutableEnvironment } from "./localOnlyGuard";
 import { holdToSubmit } from "./holdToSubmit";
+import { clickFirstOptionNear } from "./diagnosticForm";
 
 /*
  * These tests write real rows to the database, so they refuse to run
@@ -9,49 +10,45 @@ import { holdToSubmit } from "./holdToSubmit";
 requireLocalMutableEnvironment();
 
 /**
- * The diagnostic's sphere -> layers -> stack -> closure graphic, verified
+ * The diagnostic's composition and the explanation beside it, verified
  * through the real journey rather than through the geometry module's unit
  * tests.
  *
- * The unit tests assert the state mapping only: given a screen and a step,
- * which stage. They cannot see whether the scene is mounted on that
- * screen, whether it renders, whether it sits on top of a question, or
- * whether it updates at all when `prefers-reduced-motion` is set. Each of
- * those has been wrong at some point, so each is asserted here against the
- * running app.
+ * The unit tests assert the geometry and the state mapping: given a screen,
+ * a step and which topics are answered, where the points go. They cannot
+ * see whether the thing is mounted on that screen, whether the explanation
+ * actually explains anything, whether it sits on top of a question, or
+ * whether it still says the right thing with `prefers-reduced-motion` set.
+ * Each of those has been wrong at some point, so each is asserted here
+ * against the running app.
  */
 
 const DESKTOP = { width: 1440, height: 900 };
+const PHONE = { width: 390, height: 844 };
 const SHOTS = "e2e-screens";
 
-async function clickFirstOptionNear(page: Page, headingText: string) {
-  const heading = page.getByText(headingText, { exact: false }).first();
-  await heading.locator("xpath=following-sibling::div[1]").locator("button").first().click();
-}
-
 /**
- * Screenshot after the stage transition has settled. The topic labels
- * carry a 300ms CSS opacity transition and the point cloud eases toward
- * its new targets, so a capture taken the moment an assertion passes
- * shows the scene mid-morph and is not representative of what a visitor
- * sees.
+ * Screenshot after the stage transition has settled. The point cloud eases
+ * toward its new targets and the copy cross-fades, so a capture taken the
+ * moment an assertion passes shows it mid-morph and is not representative
+ * of what a visitor sees.
  */
 async function shot(page: Page, name: string, scroll: "top" | "bottom" = "top") {
-  // Filling and clicking fields scrolls them into view, so by the end of a
-  // step the page is left part-way down and a capture taken there is not
-  // what a visitor arriving on the screen sees. Park the page explicitly.
-  await page.evaluate((to) => window.scrollTo(0, to === "top" ? 0 : document.body.scrollHeight), scroll);
+  await page.evaluate(
+    (to) => window.scrollTo(0, to === "top" ? 0 : document.body.scrollHeight),
+    scroll
+  );
   await page.waitForTimeout(900);
   await page.screenshot({ path: `${SHOTS}/${name}.png` });
 }
 
-/** The scene's canvas. The form screens have no other canvas. */
+/** The scene's canvas. The diagnostic route has no other canvas. */
 function scene(page: Page) {
   return page.locator("canvas");
 }
 
 /**
- * The scene is decorative and sits behind the content, but the page has no
+ * The canvas is decorative and sits behind the content, but the page has no
  * opaque background — so points drawn under a paragraph show through it.
  * "Behind" is not sufficient; it must not be over the content at all.
  */
@@ -97,30 +94,24 @@ async function expectClearOf(
   ).toBe(true);
 }
 
-
 /**
- * The old "MODUS / Initial Profile" node-map card must be gone, not
- * merely moved.
+ * Everything the brief required to be gone, asserted as absent rather than
+ * assumed gone.
  *
- * This replaces a clearance check between the scene and that panel. Once
- * the panel was removed, its locator (`div.rounded-md.border`) still
- * matched one unrelated element, so the check kept passing while
- * asserting nothing about anything. Asserting its absence is the claim
- * that actually matters now.
+ * The node-map card, its pill menu, the "preliminary signals" section that
+ * passed judgement on a half-finished answer set, and the placeholder
+ * sentences that stood in for facts that did not exist yet.
  */
-async function expectNodeMapGone(page: Page) {
+async function expectRetiredSurfacesGone(page: Page) {
   await expect(page.getByText(/INITIAL PROFILE/i)).toHaveCount(0);
-  // The node map's own pill labels, which were a separate vertical menu.
   for (const pill of ["OPERATIONS", "AUTOMATION", "REVENUE", "DATA"]) {
     await expect(page.getByText(pill, { exact: true })).toHaveCount(0);
   }
-}
-
-/** Inline opacity of a projected topic label, written by the render path. */
-async function labelOpacity(page: Page, layer: number): Promise<number> {
-  return Number(
-    await page.locator(`[data-layer="${layer}"]`).evaluate((el) => (el as HTMLElement).style.opacity || "0")
-  );
+  await expect(page.getByText(/Preliminary Signals/i)).toHaveCount(0);
+  await expect(page.getByText(/watching for signals/i)).toHaveCount(0);
+  await expect(page.getByText(/profile will build here/i)).toHaveCount(0);
+  // The six projected topic labels, which lined up into a floating menu.
+  await expect(page.locator("[data-layer]")).toHaveCount(0);
 }
 
 async function fillStep1(page: Page, company: string) {
@@ -128,6 +119,27 @@ async function fillStep1(page: Page, company: string) {
   await page.locator("select").first().selectOption({ index: 1 });
   await clickFirstOptionNear(page, "Employees");
   await clickFirstOptionNear(page, "Locations");
+}
+
+/**
+ * Walks forward from wherever the form is to the review screen WITHOUT
+ * touching any answer.
+ *
+ * Used after an EDIT detour. Re-running `answerThroughPriorities` there
+ * would re-click options that are already selected, which toggles them
+ * OFF and leaves the step incomplete — the forward button then stays
+ * disabled, which is correct behaviour and a broken test.
+ */
+async function advanceToReview(page: Page) {
+  for (let i = 0; i < 8; i++) {
+    const review = page.getByRole("button", { name: /^Review$/ });
+    if (await review.count()) {
+      await review.click();
+      return;
+    }
+    await page.getByRole("button", { name: /^Continue$/ }).click();
+  }
+  throw new Error("never reached the review screen");
 }
 
 /** Steps 2..5, leaving the contact step open. */
@@ -146,35 +158,38 @@ async function answerThroughPriorities(page: Page) {
   await page.getByRole("button", { name: /^Continue$/ }).click();
 }
 
-test.describe("diagnostic scene through the real journey", () => {
+test.describe("the composition through the real journey", () => {
   test.use({ viewport: DESKTOP });
   // These walk the whole six-step flow and pause for each stage to settle
   // before capturing it, which does not fit the default per-test budget.
-  test.setTimeout(90_000);
+  test.setTimeout(120_000);
 
-  test("every stage mounts, renders, and stays clear of the content", async ({ page }) => {
+  test("every stage explains itself, renders, and stays clear of the content", async ({ page }) => {
     const errors: string[] = [];
     page.on("console", (m) => {
       if (m.type() === "error") errors.push(m.text());
     });
 
-    // --- entry: the sphere -------------------------------------------
+    // --- entry --------------------------------------------------------
     await page.goto("/diagnostic");
     await expect(scene(page)).toHaveCount(1);
+    // The claim the whole graphic rests on: it says why the questions are
+    // being asked. Not just that it rendered.
+    await expect(page.getByText("Why we ask")).toBeVisible();
+    await expect(page.getByText("Six topics make one picture.")).toBeVisible();
     await expectClearOf(page, page.getByRole("heading").first(), "the entry heading", "text");
-    // Naming topics at entry would imply progress that has not happened.
-    expect(await labelOpacity(page, 0)).toBe(0);
-    await shot(page, "01-entry-sphere");
+    await expectRetiredSurfacesGone(page);
+    await shot(page, "01-entry");
 
     /*
      * Tag the live canvas so the stage changes below can prove it is the
-     * SAME element throughout. The whole sequence is built on one cloud
-     * with persistent point identities — the same point that sits on the
-     * entry sphere becomes a point in a topic layer and then a point in
-     * the mark. A remount would silently reset every position to the
-     * sphere and lose the WebGL context, and the four stages would read
-     * as four unrelated illustrations rather than one object being
-     * reorganised. Nothing else in the suite would notice.
+     * SAME element throughout. The whole sequence is one cloud with
+     * persistent point identities — the same point that sits in the
+     * opening cloud is drawn into a topic's wedge and then into the mark.
+     * A remount would silently reset every position and lose the WebGL
+     * context, and the stages would read as unrelated illustrations rather
+     * than one object being organised. Nothing else in the suite would
+     * notice.
      */
     await scene(page).first().evaluate((el) => {
       (el as HTMLCanvasElement & { __sceneId?: string }).__sceneId = "entry-cloud";
@@ -184,11 +199,15 @@ test.describe("diagnostic scene through the real journey", () => {
         .first()
         .evaluate((el) => (el as HTMLCanvasElement & { __sceneId?: string }).__sceneId === "entry-cloud");
 
-    // --- answering: separated layers, active topic emphasised --------
+    // --- answering ----------------------------------------------------
     await page.getByRole("button", { name: /Start|Begin/i }).first().click();
     await expect(page.getByText("01 / 06")).toBeVisible();
     await expect(scene(page)).toHaveCount(1);
-    // The scene must not cover the question or the controls.
+    // The explanation is per-step, and it is the current step's.
+    await expect(page.getByText(/Size, sector and locations set what counts as normal/i)).toBeVisible();
+    // Nothing is summarised before anything is answered — and no
+    // placeholder stands in for the facts that do not exist yet.
+    await expect(page.getByText(/Recorded so far/i)).toHaveCount(0);
     await expectClearOf(page, page.getByLabel("Company name"), "the company-name field");
     await expectClearOf(
       page,
@@ -196,61 +215,50 @@ test.describe("diagnostic scene through the real journey", () => {
       "the question heading",
       "text"
     );
-    // The first topic reads as active; a later one is present but quiet.
-    await expect.poll(() => labelOpacity(page, 0), { timeout: 4000 }).toBe(1);
-    expect(await labelOpacity(page, 3)).toBeLessThan(1);
-    // One composition, not the scene plus the old card.
-    await expectNodeMapGone(page);
-    await expect(page.locator("canvas")).toHaveCount(1);
-    // The layers are pinned below the sticky panel and must stay clear of
-    // it wherever the page is scrolled.
-    expect(await sameCanvas(), "the scene remounted between the entry sphere into the topic layers").toBe(true);
-    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-    await page.waitForTimeout(500);
-    await page.evaluate(() => window.scrollTo(0, Math.round(document.body.scrollHeight / 2)));
-    await page.waitForTimeout(500);
-    await shot(page, "02-layers-step1");
+    await expectRetiredSurfacesGone(page);
+    expect(await sameCanvas(), "the scene remounted between the entry cloud and the first topic").toBe(true);
+    await shot(page, "02-form-step1-nothing-recorded");
 
-    // The active layer tracks the real step, not a decorative counter.
+    // Answering is what makes a summary appear, and it is the real answer.
     await fillStep1(page, "Scene QA BV");
+    const industry = await page.locator("select").first().inputValue();
+    await expect(page.getByText(/Recorded so far/i)).toBeVisible();
+    await expect(page.getByText("1 of 6 topics recorded")).toBeVisible();
+    await expect(page.getByText("Scene QA BV", { exact: true })).toBeVisible();
+    await expect(page.getByText(industry, { exact: true }).first()).toBeVisible();
+    await shot(page, "03-form-step1-recorded");
+
+    // The explanation follows the real step.
     await page.getByRole("button", { name: /^Continue$/ }).click();
     await expect(page.getByText("02 / 06")).toBeVisible();
-    await expect.poll(() => labelOpacity(page, 1), { timeout: 4000 }).toBe(1);
-    expect(await labelOpacity(page, 0)).toBeLessThan(1);
-    // The panel grows as answers accumulate, so the band is re-measured
-    // per step rather than sampled once.
-    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-    await page.waitForTimeout(500);
-    await shot(page, "03-layers-step2");
-    // The layers sit beneath the `sticky` ProfilePanel, in the lower part
-    // of the right column, so this is where they are seen in full.
-    await shot(page, "03b-layers-scrolled", "bottom");
+    await expect(page.getByText(/How work arrives, and how much of it is moved by hand/i)).toBeVisible();
+    await expect(page.getByText(/Size, sector and locations/i)).toHaveCount(0);
+    // What was already recorded stays recorded.
+    await expect(page.getByText("Scene QA BV", { exact: true })).toBeVisible();
+    await shot(page, "04-form-step2");
 
-    // Back navigation resolves to the earlier layer rather than queueing.
+    // Back navigation resolves to the earlier topic and does NOT un-record
+    // what was answered.
     await page.getByRole("button", { name: /^Back$/ }).click();
     await expect(page.getByText("01 / 06")).toBeVisible();
-    await expect.poll(() => labelOpacity(page, 0), { timeout: 4000 }).toBe(1);
+    await expect(page.getByText(/Size, sector and locations/i)).toBeVisible();
+    await expect(page.getByText("1 of 6 topics recorded")).toBeVisible();
+    await expect(page.getByLabel("Company name")).toHaveValue("Scene QA BV");
 
-    // --- review: the composed stack ----------------------------------
-    await page.getByRole("button", { name: /^Continue$/ }).click();
-    await clickFirstOptionNear(page, "reach you");
-    await page.getByRole("button", { name: /^Continue$/ }).click();
-    await clickFirstOptionNear(page, "runs your business");
-    await clickFirstOptionNear(page, "connected are these systems");
-    await page.getByRole("button", { name: /^Continue$/ }).click();
-    await clickFirstOptionNear(page, "harder than it should");
-    await page.getByRole("button", { name: /^Continue$/ }).click();
-    await clickFirstOptionNear(page, "primarily interested in");
-    await clickFirstOptionNear(page, "biggest difference");
-    await clickFirstOptionNear(page, "ideally start");
-    await page.getByRole("button", { name: /^Continue$/ }).click();
+    // --- review -------------------------------------------------------
+    await answerThroughPriorities(page);
     await page.getByLabel("First name").fill("Scene");
     await page.getByLabel("Last name").fill("QA");
     await page.getByLabel("Work email").fill(`scene-${Date.now()}@playwright-qa.dev`);
+    await expect(page.getByText("6 of 6 topics recorded")).toBeVisible();
     await page.getByRole("button", { name: /Review/i }).click();
     await expect(page.getByText(/review/i).first()).toBeVisible({ timeout: 5000 });
 
     await expect(scene(page)).toHaveCount(1);
+    // The three groups the brief asked for, by name.
+    for (const group of ["Your work", "What gets in the way", "What matters first"]) {
+      await expect(page.getByText(group, { exact: true })).toBeVisible();
+    }
     const submitBtn = page.getByRole("button", { name: /Hold to Submit/i });
     await expectClearOf(page, submitBtn, "the submit button");
     await expectClearOf(
@@ -262,8 +270,7 @@ test.describe("diagnostic scene through the real journey", () => {
     /*
      * Every row's EDIT control, not just one. These sit at the right-hand
      * end of the review column — the edge nearest the scene — so they are
-     * what a mispositioned gutter would collide with first. Asserting
-     * each of them is what caught the column being full-width.
+     * what a mispositioned gutter would collide with first.
      */
     const editControls = page.getByRole("button", { name: /^edit$/i });
     const editCount = await editControls.count();
@@ -271,42 +278,47 @@ test.describe("diagnostic scene through the real journey", () => {
     for (let i = 0; i < editCount; i++) {
       await expectClearOf(page, editControls.nth(i), `EDIT control ${i + 1} of ${editCount}`);
     }
-    // Topic labels belong to the question stages; the stack is unlabelled.
-    await expect.poll(() => labelOpacity(page, 0), { timeout: 4000 }).toBe(0);
-    expect(await sameCanvas(), "the scene remounted between the layers and the review stack").toBe(true);
-    await shot(page, "04-review-stack");
+    // Nothing claims a save has happened.
+    await expect(page.getByText(/stored with MODUS/i)).toHaveCount(0);
+    expect(await sameCanvas(), "the scene remounted between the topics and the review groups").toBe(true);
+    await shot(page, "05-review-three-groups");
 
-    // --- closure: only after the server acknowledges ------------------
-    await holdToSubmit(page, submitBtn);
+    // --- EDIT from review feeds back into the summary ------------------
+    await editControls.first().click();
+    await expect(page.getByText("01 / 06")).toBeVisible();
+    await page.getByLabel("Company name").fill("Edited QA BV");
+    await expect(page.getByText("Edited QA BV", { exact: true })).toBeVisible();
+    await expect(page.getByText("Scene QA BV", { exact: true })).toHaveCount(0);
+    await shot(page, "06-edit-updates-summary");
+
+    // --- closure: only after the server acknowledges -------------------
+    await advanceToReview(page);
+    await expect(page.getByText(/review/i).first()).toBeVisible({ timeout: 5000 });
+    await holdToSubmit(page, page.getByRole("button", { name: /Hold to Submit/i }));
     await expect(page.getByText(/ESTIMATE|ENGAGEMENT/i).first()).toBeVisible({ timeout: 15000 });
     await expect(scene(page)).toHaveCount(1);
     await expectClearOf(page, page.getByRole("heading").first(), "the estimate heading", "text");
-    expect(await sameCanvas(), "the scene remounted between the review stack and the closure").toBe(true);
-    await shot(page, "05-result-closure");
+    expect(await sameCanvas(), "the scene remounted between the review groups and the closure").toBe(true);
+    await shot(page, "07-result-closure");
 
-    // --- profile: the closure as the screen's subject ------------------
-    // Returning to /diagnostic with a completed diagnostic lands on the
-    // profile-ready screen, whose two-column grid has only one child — so
-    // the closure composition occupies the empty column rather than
-    // accompanying content from the margin.
+    // --- profile: the closure as the screen's subject, with its wording -
     await page.goto("/diagnostic");
     await expect(page.getByText(/PROFILE READY/i)).toBeVisible({ timeout: 10000 });
     await expect(scene(page)).toHaveCount(1);
+    await expect(page.getByText(/Your answers are stored with MODUS/i)).toBeVisible();
     await expectClearOf(page, page.getByRole("heading").first(), "the profile heading", "text");
     await expectClearOf(
       page,
       page.getByRole("button", { name: /Start a new diagnostic/i }),
       "the start-new control"
     );
-    expect(await labelOpacity(page, 0)).toBe(0);
-    await shot(page, "10-profile-closure");
+    await shot(page, "08-profile-closure");
 
-    expect(errors, `console errors across the scene journey:\n${errors.join("\n")}`).toEqual([]);
+    expect(errors, `console errors across the journey:\n${errors.join("\n")}`).toEqual([]);
   });
 
-  test("a failed submission holds the review stack and does not reach closure", async ({ page }) => {
-    // The scene must never anticipate success. On failure it stays in the
-    // review structure, because nothing has been persisted.
+  test("a failed submission holds the review grouping and never claims a save", async ({ page }) => {
+    // The one thing the composition must never do is anticipate success.
     await page.route("**/api/diagnostic", (route) =>
       route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: "fail" }) })
     );
@@ -324,45 +336,88 @@ test.describe("diagnostic scene through the real journey", () => {
     await holdToSubmit(page, page.getByRole("button", { name: /Hold to Submit/i }));
     await expect(page.getByText("That didn't go through.")).toBeVisible({ timeout: 10000 });
 
-    // Still mounted, still the stack, still unlabelled — and crucially the
-    // estimate screen was never reached.
+    // Still mounted, still the review grouping, and crucially neither the
+    // estimate nor the "stored with MODUS" wording was ever reached.
     await expect(scene(page)).toHaveCount(1);
-    expect(await labelOpacity(page, 0)).toBe(0);
+    await expect(page.getByText("Your work", { exact: true })).toBeVisible();
+    await expect(page.getByText(/stored with MODUS/i)).toHaveCount(0);
     await expect(page.getByText(/ESTIMATE|ENGAGEMENT/i)).toHaveCount(0);
     await expectClearOf(page, page.getByText("That didn't go through."), "the failure message", "text");
-    await shot(page, "06-submit-error-stack");
+    await shot(page, "09-submit-error");
+
+    // A retry that succeeds is what finally produces the closure wording.
+    await page.unroute("**/api/diagnostic");
+    await page.getByRole("button", { name: /Back to review/i }).click();
+    await holdToSubmit(page, page.getByRole("button", { name: /Hold to Submit/i }));
+    await expect(page.getByText(/ESTIMATE|ENGAGEMENT/i).first()).toBeVisible({ timeout: 15000 });
+    await shot(page, "10-retry-succeeded");
   });
 
-  test("reduced motion still advances the stages, it just does not animate them", async ({ page }) => {
+  test("reduced motion shows the SAME information, it just does not animate it", async ({ page }) => {
     // The regression this guards: with no frame loop running, a stage
     // change had nothing to pick it up, so the scene stayed frozen on
-    // whatever composition it mounted with. A visitor who prefers reduced
-    // motion saw the entry sphere for the entire journey.
+    // whatever composition it mounted with.
     await page.emulateMedia({ reducedMotion: "reduce" });
 
     await page.goto("/diagnostic");
     await expect(scene(page)).toHaveCount(1);
-    expect(await labelOpacity(page, 0)).toBe(0); // sphere: unlabelled
-    await shot(page, "07-reduced-entry");
+    await expect(page.getByText("Six topics make one picture.")).toBeVisible();
+    await shot(page, "11-reduced-entry");
 
     await page.getByRole("button", { name: /Start|Begin/i }).first().click();
     await expect(page.getByText("01 / 06")).toBeVisible();
-    // Rendered once for the layers stage, without animating into it.
-    await expect.poll(() => labelOpacity(page, 0), { timeout: 4000 }).toBe(1);
-    await shot(page, "08-reduced-layers-step1");
-
+    await expect(page.getByText(/Size, sector and locations/i)).toBeVisible();
     await fillStep1(page, "Reduced Motion BV");
+    // The summary is not an animation, so it is here too.
+    await expect(page.getByText("1 of 6 topics recorded")).toBeVisible();
+    await expect(page.getByText("Reduced Motion BV", { exact: true })).toBeVisible();
+    await shot(page, "12-reduced-form");
+
     await page.getByRole("button", { name: /^Continue$/ }).click();
     await expect(page.getByText("02 / 06")).toBeVisible();
-    await expect.poll(() => labelOpacity(page, 1), { timeout: 4000 }).toBe(1);
-    expect(await labelOpacity(page, 0)).toBeLessThan(1);
-    await shot(page, "09-reduced-layers-step2");
+    await expect(page.getByText(/How work arrives/i)).toBeVisible();
+    await shot(page, "13-reduced-form-step2");
   });
 
-  test("below the layout's threshold the scene is not mounted at all", async ({ page }) => {
+  test("on a phone the explanation is text only, with no WebGL context at all", async ({ page }) => {
     // Not merely hidden with CSS: a hidden canvas still holds a WebGL
-    // context. This is the invariant diagnostic-checkpoint5 also protects
-    // for phones, asserted here for the later stages too.
+    // context and still costs GPU memory. The words are what a narrow
+    // screen should spend its room on, and they must actually be there.
+    await page.setViewportSize(PHONE);
+
+    await page.goto("/diagnostic");
+    await expect(scene(page)).toHaveCount(0);
+    await expect(page.getByText("Six topics make one picture.")).toBeVisible();
+    await shot(page, "14-phone-entry");
+
+    await page.getByRole("button", { name: /Start|Begin/i }).first().click();
+    await expect(page.getByText("01 / 06")).toBeVisible();
+    await expect(scene(page)).toHaveCount(0);
+    await expect(page.getByText(/Size, sector and locations/i)).toBeVisible();
+    await fillStep1(page, "Phone QA BV");
+    await expect(page.getByText("1 of 6 topics recorded")).toBeVisible();
+    await shot(page, "15-phone-form");
+
+    await answerThroughPriorities(page);
+    await page.getByLabel("First name").fill("Phone");
+    await page.getByLabel("Last name").fill("QA");
+    await page.getByLabel("Work email").fill(`phone-${Date.now()}@playwright-qa.dev`);
+    await page.getByRole("button", { name: /Review/i }).click();
+    await expect(page.getByText(/review/i).first()).toBeVisible({ timeout: 5000 });
+    // The grouping is the framing for this screen, so it is not
+    // desktop-only.
+    for (const group of ["Your work", "What gets in the way", "What matters first"]) {
+      await expect(page.getByText(group, { exact: true })).toBeVisible();
+    }
+    await expect(scene(page)).toHaveCount(0);
+    await shot(page, "16-phone-review");
+
+    await holdToSubmit(page, page.getByRole("button", { name: /Hold to Submit/i }));
+    await expect(page.getByText(/ESTIMATE|ENGAGEMENT/i).first()).toBeVisible({ timeout: 15000 });
+    await shot(page, "17-phone-result");
+  });
+
+  test("below the layout's threshold the canvas is not mounted", async ({ page }) => {
     await page.setViewportSize({ width: 900, height: 800 });
     await page.goto("/diagnostic");
     await page.waitForLoadState("networkidle");
@@ -373,7 +428,7 @@ test.describe("diagnostic scene through the real journey", () => {
     await expect(scene(page)).toHaveCount(0);
 
     // The review-family screens need a wider gutter than 1024px, so at
-    // 1100 the entry sphere mounts but the review stack does not.
+    // 1100 the entry composition mounts but the review one does not.
     await page.setViewportSize({ width: 1100, height: 800 });
     await page.goto("/diagnostic");
     await expect(scene(page)).toHaveCount(1);
@@ -384,15 +439,15 @@ test.describe("diagnostic scene through the real journey", () => {
  * Captures at the widths where the documented thresholds change what is
  * shown, and asserts the thresholds rather than only photographing them.
  *
- * 1024 — the entry sphere and topic layers mount; the review stack and
- * result closure do not, because those layouts' only free space is the
- * page gutter and it is not wide enough until 1280.
+ * 1024 — the entry and answering compositions mount; the review and result
+ * ones do not, because those layouts' only free space is the page gutter
+ * and it is not wide enough until 1280.
  * 1280 — everything mounts.
  * 1440 — the reference width the placements were measured at.
  */
 for (const width of [1024, 1280, 1440]) {
-  test(`stage placement and thresholds at ${width}px`, async ({ page }) => {
-    test.setTimeout(90_000);
+  test(`placement and thresholds at ${width}px`, async ({ page }) => {
+    test.setTimeout(120_000);
     const gutterStages = width >= 1280;
     await page.setViewportSize({ width, height: 900 });
 
@@ -403,14 +458,10 @@ for (const width of [1024, 1280, 1440]) {
     await page.getByRole("button", { name: /Start|Begin/i }).first().click();
     await expect(page.getByText("01 / 06")).toBeVisible();
     await expect(scene(page)).toHaveCount(1);
-    // Wherever the layers are actually drawn, they must clear the panel.
-    if (await scene(page).first().isVisible()) {
-      await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-      await page.waitForTimeout(400);
-    }
-    await shot(page, `w${width}-2-layers`);
-
     await fillStep1(page, `Width ${width} BV`);
+    await expectClearOf(page, page.getByLabel("Company name"), "the company-name field");
+    await shot(page, `w${width}-2-form`);
+
     await answerThroughPriorities(page);
     await page.getByLabel("First name").fill("Width");
     await page.getByLabel("Last name").fill("QA");
@@ -418,6 +469,8 @@ for (const width of [1024, 1280, 1440]) {
     await page.getByRole("button", { name: /Review/i }).click();
     await expect(page.getByText(/review/i).first()).toBeVisible({ timeout: 5000 });
     await expect(scene(page)).toHaveCount(gutterStages ? 1 : 0);
+    // Either way the three groups are readable at this width.
+    await expect(page.getByText("Your work", { exact: true })).toBeVisible();
     const submitBtn = page.getByRole("button", { name: /Hold to Submit/i });
     if (gutterStages) {
       await expectClearOf(page, submitBtn, "the submit button");
@@ -441,35 +494,3 @@ for (const width of [1024, 1280, 1440]) {
     await shot(page, `w${width}-5-profile`);
   });
 }
-
-test("the composition carries the real profile, not a decorative stand-in", async ({ page }) => {
-  /*
-   * The node-map card is gone, so the facts and signals it showed have to
-   * live inside the one composition — otherwise this would be a deletion
-   * rather than a replacement. These are the visitor's own answers and
-   * `buildSignals`' own output, unchanged.
-   */
-  test.setTimeout(90_000);
-  await page.setViewportSize(DESKTOP);
-  await page.goto("/diagnostic");
-  await page.getByRole("button", { name: /Start|Begin/i }).first().click();
-  await expect(page.getByText("01 / 06")).toBeVisible();
-
-  // Nothing answered yet: the readout says so rather than inventing data.
-  await expect(page.getByText(/Your profile will build here as you answer/i)).toBeVisible();
-  await expectNodeMapGone(page);
-
-  await fillStep1(page, "Composition QA BV");
-  // The industry and team size the visitor just chose appear in the
-  // composition, in the same column as the scene.
-  const industry = await page.locator("select").first().inputValue();
-  await expect.poll(async () => (await page.locator("body").innerText()).includes(industry), { timeout: 6000 }).toBe(true);
-
-  await page.getByRole("button", { name: /^Continue$/ }).click();
-  await expect(page.getByText("02 / 06")).toBeVisible();
-  // Still one canvas, still one composition.
-  await expect(page.locator("canvas")).toHaveCount(1);
-  await expect(page.getByText(/Preliminary Signals/i)).toBeVisible();
-
-  await shot(page, "11-composition-with-profile");
-});

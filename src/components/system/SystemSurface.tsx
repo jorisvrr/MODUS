@@ -2,7 +2,7 @@
 
 import { motion, useReducedMotion, type Variants } from "motion/react";
 import { X } from "lucide-react";
-import { useEffect, useId, type ReactNode } from "react";
+import { useEffect, useId, useRef, type ReactNode } from "react";
 
 const ease = [0.16, 1, 0.3, 1] as const;
 
@@ -47,6 +47,7 @@ export function SystemSurface({
   children,
   className = "",
   placement = "bottom-left",
+  reserveSpace = false,
 }: {
   label: ReactNode;
   onClose?: () => void;
@@ -54,9 +55,50 @@ export function SystemSurface({
   children: ReactNode;
   className?: string;
   placement?: "bottom-left" | "bottom-center";
+  /**
+   * Reserve room at the bottom of the document while this surface spans
+   * the viewport, so it cannot cover the page's own controls.
+   *
+   * Set by the consent banner, which is the one surface a visitor cannot
+   * simply ignore. Below `sm` it is full-bleed (`inset-x-3`), and a
+   * full-width fixed bar at the bottom of a phone sits exactly where a
+   * form's "Continue" button ends up — it made the diagnostic's primary
+   * action unclickable, which Playwright's actionability check caught as
+   * "subtree intercepts pointer events". From `sm` up it is a 380px card
+   * and padding the whole document for it would add a strip of empty
+   * space to every page, so the reservation is keyed on the measured
+   * width rather than on a duplicated breakpoint.
+   */
+  reserveSpace?: boolean;
 }) {
   const variants = useDatumVariants();
   const labelId = useId();
+  const surfaceRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!reserveSpace) return;
+    const el = surfaceRef.current;
+    if (!el) return;
+    const root = document.documentElement;
+    const apply = () => {
+      const r = el.getBoundingClientRect();
+      const spansViewport = r.width / window.innerWidth > 0.9;
+      // The surface animates in from `scale: 0.98` and `y: 14`, so an
+      // early measurement is slightly short. Rounding up by the gap it
+      // already sits in covers that without watching the animation.
+      if (spansViewport) root.style.setProperty("--system-surface-reserve", `${Math.ceil(r.height) + 24}px`);
+      else root.style.removeProperty("--system-surface-reserve");
+    };
+    apply();
+    const ro = new ResizeObserver(apply);
+    ro.observe(el);
+    window.addEventListener("resize", apply);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener("resize", apply);
+      root.style.removeProperty("--system-surface-reserve");
+    };
+  }, [reserveSpace]);
 
   useEffect(() => {
     if (!onClose) return;
@@ -74,6 +116,7 @@ export function SystemSurface({
 
   return (
     <motion.div
+      ref={surfaceRef}
       role="dialog"
       aria-labelledby={labelId}
       initial="hidden"

@@ -101,7 +101,8 @@ export function DiagnosticCTA({
   magnetic = false,
   className = "",
   source,
-  hint,
+  newVisitorLabel,
+  beforeNavigate,
   icon,
 }: {
   variant?: Variant;
@@ -111,15 +112,25 @@ export function DiagnosticCTA({
    * established convention every other diagnostic CTA in the codebase
    * already follows (FinalCTA, PricingHero, PricingEstimateCTA). */
   source: string;
-  /** Checkpoint 5, Section 13 — an optional, non-authoritative context hint
-   * (e.g. the homepage diagnostic-entry's selected category chip),
-   * appended as a `?hint=` query param purely for the Diagnostic intro
-   * screen to acknowledge visually. Only applied for a genuinely new
-   * visitor (`RUN_DIAGNOSTIC`) — a returning visitor's `nextBestAction`
-   * href may point at an in-progress diagnostic, a profile, or an
-   * external proposal URL, none of which a homepage category chip is
-   * relevant to. Never read by the state machine itself. */
-  hint?: string;
+  /**
+   * Replaces the label for a genuinely NEW visitor only (`RUN_DIAGNOSTIC`).
+   *
+   * A returning visitor keeps their personalised next-best-action wording
+   * and href — "Continue Diagnostic", "View Proposal", "View Profile" —
+   * because those describe where the link actually goes, and a section's
+   * own phrasing must not overwrite that. Same condition the old `?hint=`
+   * used, for the same reason.
+   */
+  newVisitorLabel?: string;
+  /**
+   * Run just before navigation. The homepage entry section uses it to save
+   * what the visitor typed and selected, on the press that leaves the page
+   * rather than on every keystroke or chip.
+   *
+   * Synchronous by contract: this fires inside the link's click handler, so
+   * anything asynchronous would not be guaranteed to finish.
+   */
+  beforeNavigate?: () => void;
   /** Replaces the visible label with an icon (used by `hero-round`). The
    * label is still applied as `aria-label`, so the accessible name — and
    * therefore the personalised next-best-action wording — is unchanged. */
@@ -134,19 +145,19 @@ export function DiagnosticCTA({
         ? dict.customerContext.proposalReady.cta
         : nextBestAction.id === "VIEW_PROFILE"
           ? dict.customerContext.profileReady.cta
-          : dict.nav.runDiagnostic;
+          : (newVisitorLabel ?? dict.nav.runDiagnostic);
 
-  const href =
-    hint && nextBestAction.id === "RUN_DIAGNOSTIC"
-      ? `${nextBestAction.href}?hint=${encodeURIComponent(hint)}`
-      : nextBestAction.href;
+  const href = nextBestAction.href;
 
   const bg = VARIANT_BG[variant];
 
   const link = (
     <Link
       href={href}
-      onClick={() => track("diagnostic_click", { source })}
+      onClick={() => {
+        beforeNavigate?.();
+        track("diagnostic_click", { source });
+      }}
       // Icon-only variants keep the label as their accessible name. For
       // text variants the name comes from `AnimatedChars`' hidden span, so
       // adding an aria-label here as well would be a second, competing

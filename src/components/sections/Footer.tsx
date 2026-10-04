@@ -117,12 +117,17 @@ export function Footer() {
             >
               {dict.footer.legal}
             </Link>
+            {/* Was href="#", a dead placeholder, like the policy links
+                above it. `rel="noopener"` because this opens in a new tab;
+                the icon is decorative, so `aria-label` carries the name. */}
             <a
-              href="#"
+              href="https://www.linkedin.com/company/withmodus"
+              target="_blank"
+              rel="noopener noreferrer"
               aria-label={dict.footer.linkedin}
               className="text-inverted-foreground/45 hover:text-inverted-foreground/80"
             >
-              <Linkedin className="h-4 w-4" strokeWidth={1.6} />
+              <Linkedin className="h-4 w-4" strokeWidth={1.6} aria-hidden />
             </a>
           </div>
         </div>

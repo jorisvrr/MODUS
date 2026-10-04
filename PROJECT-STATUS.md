@@ -2110,3 +2110,280 @@ project settings, readable only in the Supabase dashboard
 I have not attempted, staged or simulated any restore. If the originals
 matter, the dashboard is where to look, and a restore should be taken on
 a branch or a copy rather than over the live project.
+
+## 38. The diagnostic graphic now has a job — 4 October 2026
+
+### What it was
+
+Six horizontal planes, one per step, each with an HTML label projected
+beside it. The planes said "there are six steps", which the progress bar
+says better, and the six labels lined up into what read as a floating
+menu over the scene. Beside them sat a readout headed **Preliminary
+Signals** that passed judgement on a half-finished answer set, and two
+placeholder sentences — *"Your profile will build here as you answer"*
+and *"MODUS is watching for signals as you answer"* — standing in for
+information that did not exist yet.
+
+### What it is
+
+One composition that grows with the answers, and words that say why.
+
+The points open as a loose, unresolved cloud. Every topic the visitor
+actually answers is drawn into a **disc** at the centre; each topic owns
+one **ring** of that disc, of equal area, filling outward in the order
+the questions are asked. The picture is whole only when all six topics
+are. At review the same points regroup into the review screen's own
+three groups, and only after the server acknowledges persistence do they
+settle onto the MODUS mark.
+
+Rings rather than wedges, which is what it was first built with and
+what the screenshots rejected: a sixth of a circle on its own does not
+read as part of a circle, it reads as a clump off to one side. A ring is
+already a complete, centred form, so the first answer produces something
+recognisable and each one after it visibly grows the same object.
+
+Two further corrections the screenshots forced, both invisible in unit
+tests:
+
+- Topics were assigned in **blocks** of consecutive point indices, and
+  `fibonacciSphere` walks pole to pole — so topic 0 was the top of the
+  opening cloud and topic 5 the bottom. With three topics answered, every
+  waiting point sat in the lower hemisphere and read as a skirt of dust
+  beneath the picture. Taking every sixth point gives each topic the
+  whole sphere. Asserted now, so it cannot come back.
+- The waiting points sat at a multiple of the opening cloud's own uneven
+  radius, which put its inner points closer in than the disc's outer
+  ring. Answering the last topic therefore moved points *outward*. They
+  now sit on an explicit shell whose minimum radius is above the disc's
+  maximum, so "answered is drawn in" is true by construction.
+
+### The words, which are the half that carries the information
+
+Every stage pairs the canvas with real HTML:
+
+| Stage | What it says |
+|---|---|
+| Entry | why six topics are asked at all |
+| Each step | one authored sentence on what that topic is for |
+| Any step | the facts recorded so far, and how many topics of six |
+| Review / submitting / failure | the three groups — Your work, What gets in the way, What matters first |
+| Result / profile | that the answers are stored — reachable only after a real save |
+
+The canvas is `aria-hidden` and says nothing that is not also written
+beside it. That is what makes three otherwise awkward cases complete
+rather than degraded: no WebGL, reduced motion, and phones — where the
+canvas is **not mounted at all** and the explanation is rendered on its
+own, in the page flow above the question.
+
+The facts are the visitor's own answers and nothing else. A branch exists
+per answer and each is guarded on that answer being non-empty, so "only
+when actually filled" holds by construction rather than by a caller
+remembering to check. Nothing is scored or concluded: a partial answer
+set supports only a partial verdict, which is worse than none. The
+signals engine still runs, on the result screen, after a real submission.
+
+**"Not sure" and "not applicable" are still not findings.** The two
+operations answers added in part 1 are left out of the summary entirely
+when the visitor chose the honest unknown, in either language — they
+record what the visitor knows, not something true of their work.
+
+### Removed, not relocated
+
+`DiagnosticProfile.tsx`, `ProfilePanel.tsx` and `SystemMap.tsx` are
+deleted, along with the `diagnosticProfilePanel` and `diagnosticSystemMap`
+dictionary blocks and the now-dead `stepTopics`. Keeping the node-map
+panel on disk would have kept the exact composition the brief rules out,
+and the e2e suite asserts each retired surface is **absent** — the card,
+its pill menu, the signals section, the placeholder sentences, and the
+projected labels.
+
+### A real defect found on the way
+
+On a phone the consent banner is full-bleed and `fixed` at the bottom,
+which is exactly where a form's **Continue** button ends up. It made the
+diagnostic's primary action unclickable — Playwright reported *"subtree
+intercepts pointer events"* — and it had never been caught because no
+test had walked the flow at phone width.
+
+`SystemSurface` now reserves room at the bottom of the document while a
+surface spans the viewport, via a CSS variable the consent banner opts
+into. Keyed on the measured width rather than a duplicated breakpoint:
+from `sm` up the banner is a 380px card and padding every page for it
+would add a strip of empty space to all of them.
+
+## 39. Homepage — "Start here" reworked, "Recently Improved" removed
+
+### Start here (SYS / 02)
+
+The chips read Website / Leads / Processes / Growth: categories of a
+service offering, not things anyone says about their own week. They now
+name the work — *Following up with customers*, *Planning work*,
+*Repetitive admin*, *Getting more enquiries*, *Not sure yet* — so
+choosing one is recognition rather than classification. The heading asks
+a question a business owner already has an answer to, the text field is
+labelled, and the CTA reads **Find my next step** with *No account needed
+to start.* beside it.
+
+The chips are real toggle buttons with `aria-pressed`, in a labelled
+group, multi-select, and *Not sure yet* is exclusive in **both**
+directions. Both fields are optional and neither gates the CTA.
+
+### How the answer travels
+
+In session storage, scoped to whoever is signed in, written **only** on
+the press that navigates.
+
+- **Not in the URL.** The old `?hint=` carried a single category. This
+  carries the visitor's own sentence about where their business is stuck,
+  and a URL is copied, pasted into chat and logged by everything in
+  between.
+- **Not in the draft key.** `modus:diagnostic:v1` holds a real
+  in-progress diagnostic, and anything non-empty in it makes the
+  diagnostic offer to resume a saved session — so a first-time visitor
+  would have been asked to "continue where you left off" having answered
+  nothing. Entry context has its own key.
+- **Scoped and purged.** Same rule as the saved profile reference: read
+  only for the identity that wrote it, withheld while Clerk is still
+  resolving, and another account's words are removed from storage rather
+  than merely hidden.
+- **Nothing happens on a chip.** No request, no write. Asserted against
+  MODUS's own origin, so Clerk's background traffic cannot make the test
+  pass or fail for an unrelated reason.
+
+### What happens to it in the diagnostic
+
+It is shown back on the entry screen under **You started with**, with the
+text in an editable field and each chip removable, plus a clear control.
+It is never written into `DiagnosticAnswers`, never read by `canProceed`,
+and no required question is pre-filled or skipped.
+
+There is exactly one route from start context into a real answer, and it
+is a press: the friction step asks the same question the homepage asked,
+so the text is offered there with **Use this as my description**. An
+automatic prefill would be the silent save the brief rules out, and it
+could also drop a four-word sentence into a field that asks for twenty
+characters, producing a validation error the visitor never caused.
+"Added to the field below" is derived from the field's actual value, not
+a flag, so editing or clearing the field puts the offer back instead of
+leaving a stale confirmation.
+
+### Recently Improved (SYS / 06)
+
+Removed from the rendered homepage — from the tree, not hidden with CSS,
+since a hidden section still ships its copy and still reads aloud. The
+sections above and below carry their own `border-t` and padding, so they
+meet as any adjacent pair does: no residual gap, no orphaned divider.
+Nothing was put in its place and no replacement case or testimonial was
+added.
+
+`CasesPreview.tsx` and `dict.home.proofSection` are both kept —
+`ProofSection.tsx` reads the same copy — and the section's only outbound
+link, `/results`, is a page of its own, still in the main nav. No nav or
+anchor link pointed at the section itself.
+
+**On SYS numbering:** the homepage's labels are not a sequence to begin
+with. In render order they read 02, 05, 07, 06, 04, 08, and the same ids
+are reused by other pages' sections. Removing 06 leaves no gap in
+anything, and renumbering the survivors would change identifiers other
+pages share, for no gain. Left alone deliberately.
+
+### Also
+
+The footer's LinkedIn icon was `href="#"`, a dead placeholder like the
+policy links beside it had been. It now points at
+`linkedin.com/company/withmodus` and opens in a new tab.
+
+## 40. Verification for parts 2–6
+
+### Unit
+
+`npm test` — **14 files, 160 tests, all passing**, including three new
+groups:
+
+- **Geometry** (23): the stage mapping; that answering draws a topic in
+  and leaves an unanswered one out; that a recorded topic does not move
+  when the step changes, so Back and EDIT cannot un-draw it; that every
+  answered point lies inside every waiting one; that each topic gets its
+  own ring, ordered outward, with equal area; that each topic is spread
+  over the whole opening cloud; and that the closing composition is
+  unreachable from every screen except `result` and `profile`.
+- **Narration** (15): that an empty answer set produces no facts at all
+  and no topic reads as recorded; that whitespace-only answers are
+  ignored; that "not sure" and "I work alone" are left out in **both**
+  languages; that values pass through verbatim; and that a group with
+  nothing in it stays empty rather than being filled with a placeholder.
+- **Entry context** (16): identity scoping in both directions, withheld
+  while the account is unknown, foreign context purged from storage,
+  never written to the diagnostic's draft key, and tolerant of whatever
+  is actually in storage.
+
+### Through the browser
+
+`npx playwright test` — **130 tests, 127 passed, 1 failed, 2 did not
+run.**
+
+The real journey is walked end to end at 1440, 1280, 1024 and 390px:
+intro → each step → Back → review → EDIT → review → submit → result →
+reload → saved profile, plus a forced failure and a retry that then
+succeeds. The assertions are about meaning, not rendering:
+
+| Claim | How it is checked |
+|---|---|
+| The graphic explains why | the entry and per-step copy is asserted by its words |
+| The explanation follows the real step | step 2's copy present, step 1's absent |
+| Nothing is summarised before it is answered | "Recorded so far" absent at step 1, present after filling it |
+| Summaries are the real answers | the typed company name and chosen industry |
+| Back does not un-record | "1 of 6 topics recorded" still true after Back |
+| EDIT updates the summary | the edited name appears, the old one is gone |
+| Review shows the three groups | all three by name, desktop and phone |
+| Closure only after a real save | "stored with MODUS" absent at review, during submit, and after a failure |
+| One object, not several | the canvas element is the same node across every stage |
+| Reduced motion loses nothing | the same copy and summary assert at each stage |
+| Phones get text, not a hidden canvas | zero canvases, explanation present, full journey completed |
+| Nothing overlaps | scene vs. every field, heading, submit control and **every** EDIT row |
+| Retired surfaces are gone | the card, its pills, the signals section, both placeholders, `[data-layer]` |
+| No console errors | asserted across the whole journey |
+
+Homepage: both widths assert the new heading, labelled field, all five
+chips, the CTA and its note; that "Recently Improved" is **absent** from
+the rendered page; that the chips do not overflow their card; that the
+CTA is full-width on a phone and not on desktop; and that the page has no
+horizontal scroll.
+
+Captures are in `e2e-screens/`: `01-entry`, `02`–`04` form,
+`05-review-three-groups`, `06-edit-updates-summary`, `07-result-closure`,
+`08-profile-closure`, `09-submit-error`, `10-retry-succeeded`,
+`11`–`13` reduced motion, `14`–`17` phone, `w1024/w1280/w1440-*`, and
+`home-start-here-{desktop,mobile}` / `home-full-{desktop,mobile}`.
+
+### The one failure, not explained away
+
+`privateWorkspace.spec.ts › Refresh re-reads the list from the server`
+failed at position 95 of 130 with the admin list showing **"That didn't
+load. The diagnostics list could not be fetched."** — the page rendered,
+the fetch did not return. The file is `mode: "serial"`, so the two tests
+after it did not run.
+
+What is known: the whole file passes on its own (5/5, run twice), the
+list endpoint paginates rather than taking a flat 200, and its query
+returns 200 rows in 25ms against the 400 now in `modus_dev`. So it is not
+a slow query and not missing data.
+
+What is **not** known: why that one request failed mid-suite. A
+dev-server recompile or connection churn after ninety-odd browser tests
+is plausible and unproven. It is recorded here as unexplained rather than
+fixed, alongside the two responsive failures already documented in §8 —
+and its trace, screenshots and page snapshot were preserved before
+anything was re-run.
+
+An earlier full run failed on a *different* test in the same file, which
+also passed in isolation. That the file, not the test, is what recurs is
+the one real signal; it is not evidence of a cause.
+
+### Not done, deliberately
+
+No production submission, no test mail, no membership change.
+`verify-production.mjs` and `verify-admin-production.mjs` were not run.
+`productionGraphic.spec.ts` was updated to the new design and passes
+locally; it asserts the deployed site and will only hold there once this
+work is deployed.

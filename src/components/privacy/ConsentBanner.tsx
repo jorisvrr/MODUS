@@ -36,7 +36,11 @@ export function ConsentBanner() {
     <>
       <AnimatePresence>
         {active && (
-          <SystemSurface label={dict.privacy.bannerLabel} placement="bottom-center">
+          <SystemSurface
+            label={dict.privacy.bannerLabel}
+            placement="bottom-center"
+            reserveSpace
+          >
             <p className="text-[13.5px] leading-relaxed text-graphite">{dict.privacy.bannerBody}</p>
             <div className="mt-3.5 flex flex-wrap gap-2.5">
               <button

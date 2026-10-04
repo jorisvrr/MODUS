@@ -4,7 +4,6 @@ import { DiagnosticEntry } from "@/components/sections/DiagnosticEntry";
 import { StackSection } from "@/components/stack/StackSection";
 import { WhatModusSees } from "@/components/sections/WhatModusSees";
 import { CapabilitiesPreview } from "@/components/sections/CapabilitiesPreview";
-import { CasesPreview } from "@/components/sections/CasesPreview";
 import { PlatformTeaser } from "@/components/sections/PlatformTeaser";
 import { PricingPreview } from "@/components/sections/PricingPreview";
 import { FinalCTA } from "@/components/sections/FinalCTA";
@@ -68,7 +67,27 @@ export default function Home() {
         <StackSection />
         <WhatModusSees />
         <CapabilitiesPreview />
-        <CasesPreview />
+        {/*
+         * `CasesPreview` ("Recently Improved — SYS / 06") is NOT rendered
+         * here any more. Removed from the tree rather than hidden with
+         * CSS: a hidden section still ships its copy to the page and still
+         * reads aloud. The sections above and below carry their own
+         * `border-t` and vertical padding, so the two now meet exactly as
+         * any adjacent pair does — no residual gap and no orphaned
+         * divider.
+         *
+         * The component and `dict.home.proofSection` are both kept:
+         * `ProofSection.tsx` still reads that same copy, and nothing was
+         * put in this section's place. Its only outbound link, `/results`,
+         * is a page of its own and is still reachable from the main nav.
+         *
+         * On SYS numbering: the homepage's labels are not a sequence to
+         * begin with — in render order they read 02, 05, 07, 06, 04, 08,
+         * and the same ids are reused by other pages' sections. Removing
+         * 06 therefore leaves no gap in anything; renumbering the
+         * survivors would change identifiers that other pages share, for
+         * no gain.
+         */}
         <PlatformTeaser />
         <PricingPreview />
         <FooterReveal lifting={<FinalCTA />} footer={<Footer />} />

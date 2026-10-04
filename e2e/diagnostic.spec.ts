@@ -2,6 +2,7 @@ import { test, expect, type Page } from "@playwright/test";
 import { requireLocalMutableEnvironment } from "./localOnlyGuard";
 import { PrismaClient } from "@prisma/client";
 import { holdToSubmit } from "./holdToSubmit";
+import { clickFirstOptionNear } from "./diagnosticForm";
 
 /*
  * These tests write real rows to the database, so they refuse to run
@@ -11,11 +12,6 @@ requireLocalMutableEnvironment();
 
 const TEST_EMAIL = "ada@playwright-qa.dev";
 const OPTIONAL_FIELD_TEST_EMAIL = "grace@playwright-qa.dev";
-
-async function clickFirstOptionNear(page: Page, headingText: string) {
-  const heading = page.getByText(headingText, { exact: false }).first();
-  await heading.locator("xpath=following-sibling::div[1]").locator("button").first().click();
-}
 
 /*
  * This flow submits a real row to the local development database, so it

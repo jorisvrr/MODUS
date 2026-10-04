@@ -291,6 +291,15 @@
   body {
     @apply bg-paper text-ink antialiased;
     /*
+     * Room for a bottom-anchored system surface that spans the viewport
+     * — in practice the consent banner on a phone. It is `fixed`, so
+     * without this it sits on top of whatever is at the bottom of the
+     * screen, which on the diagnostic is the "Continue" button. The
+     * variable is set and removed by `SystemSurface`; the fallback is 0,
+     * so nothing changes when no such surface is up.
+     */
+    padding-bottom: var(--system-surface-reserve, 0px);
+    /*
      * Osmo's own formula puts the base unit at ~11.02px at the 992px
      * desktop floor, which is not readable body copy. The mandate says to
      * consider minimum readability rather than mechanically shrinking all

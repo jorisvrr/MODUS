@@ -33,39 +33,51 @@ const FRAGMENT = /* glsl */ `
     float d = dot(c, c);
     if (d > 0.25) discard;              // circular, not square
     float edge = smoothstep(0.25, 0.17, d);
-    // Emphasis drives BOTH colour and opacity: the active topic reads in
-    // MODUS green, quieter topics fall back to ink and fade.
+    // Emphasis drives BOTH colour and opacity: the topic being answered
+    // reads in MODUS green, recorded topics fall back to ink, and topics
+    // not yet reached fade back without disappearing.
     vec3 color = mix(uInk, uAccent, smoothstep(0.6, 1.0, vEmphasis));
-    gl_FragColor = vec4(color, edge * mix(0.18, 1.0, vEmphasis));
+    gl_FragColor = vec4(color, edge * mix(0.14, 1.0, vEmphasis));
   }
 `;
 
 /**
- * The diagnostic's visual story: an unresolved sphere at entry, topic
- * layers separating as the visitor answers, an ordered stack at review,
- * and — only after the server confirms persistence — a closure that
- * assembles the MODUS mark.
+ * The diagnostic's composition: a loose cloud that is drawn into one disc
+ * as topics are answered, regrouped into the review screen's three groups
+ * at review, and — only after the server confirms persistence — settled
+ * onto the MODUS mark.
  *
- * One scene, one cloud, persistent point identities. Positions are
- * interpolated toward the current stage's targets every frame, so back
- * navigation, editing and a restored draft all resolve to the correct
- * composition without queued or stale transitions: a new stage simply
- * changes the target and the points continue from wherever they are.
+ * One scene, one cloud, persistent point identities. Positions ease toward
+ * the current stage's targets every frame, so back navigation, editing and
+ * a restored draft all resolve to the right composition without queued or
+ * stale transitions: a new stage changes the target and the points
+ * continue from wherever they are.
  *
- * It is ILLUSTRATIVE. It never claims anything about the visitor's
- * business, shows no score, and cannot reach the success composition
- * before a real acknowledged submission.
+ * Purely visual. The explanation and the answer summary beside it are real
+ * HTML (`DiagnosticExplainer`) — the canvas is `aria-hidden` and carries
+ * no information that exists nowhere else, which is also what makes the
+ * reduced-motion and no-WebGL paths complete rather than degraded.
+ *
+ * No projected labels any more. Six HTML labels pinned to six separated
+ * planes lined up into what read as a floating menu over the scene, and
+ * they duplicated the step heading and progress bar underneath. The
+ * explanation now sits in one block beside the canvas, where it is
+ * selectable, translatable and readable by a screen reader.
  */
 export function DiagnosticScene({
   screen,
   step,
-  labels = [],
+  recorded,
   className = "",
 }: {
   screen: string;
   step: number;
-  /** Real diagnostic topic names, one per layer, in step order. */
-  labels?: readonly string[];
+  /**
+   * One flag per topic: true once that topic holds a real answer. This is
+   * what the composition grows by, so it must come from the answers
+   * themselves and not from the step counter.
+   */
+  recorded: readonly boolean[];
   className?: string;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
@@ -75,28 +87,29 @@ export function DiagnosticScene({
   const theme = useResolvedTheme();
   // Read inside the frame loop so a stage change never rebuilds the scene
   // or the WebGL context.
-  const stageRef = useRef<DiagnosticStage>(stageFor(screen, step));
-  const labelLayerRef = useRef<HTMLDivElement>(null);
+  const stageRef = useRef<DiagnosticStage>(stageFor(screen, step, recorded));
   // Set by the scene effect while reduced motion is in force. See below.
   const renderStaticRef = useRef<(() => void) | null>(null);
 
+  /*
+   * `recorded` is a fresh array on every parent render, so it must not be
+   * an effect dependency — that alone would re-run this effect constantly.
+   * Its CONTENT is what matters, and that is a short, stable string.
+   */
+  const recordedKey = recorded.map((r) => (r ? "1" : "0")).join("");
+
   useEffect(() => {
-    stageRef.current = stageFor(screen, step);
+    stageRef.current = stageFor(screen, step, recordedKey.split("").map((c) => c === "1"));
     /*
      * Under reduced motion there is no frame loop running, so nothing
      * would ever pick this new stage up — the scene would stay frozen in
-     * whatever composition it was mounted with. That was invisible while
-     * the scene only mounted on the entry screen, where the stage never
-     * changes. Now that it runs through the whole journey, a visitor who
-     * prefers reduced motion would otherwise be shown the entry sphere
-     * while answering, reviewing and finishing.
-     *
-     * Re-rendering once per stage change keeps every stage correct
-     * without animating between them, which is the actual request behind
-     * `prefers-reduced-motion`: no motion, not no information.
+     * whatever composition it was mounted with. Re-rendering once per
+     * stage change keeps every stage correct without animating between
+     * them, which is the actual request behind `prefers-reduced-motion`:
+     * no motion, not no information.
      */
     if (reducedMotion) renderStaticRef.current?.();
-  }, [screen, step, reducedMotion]);
+  }, [screen, step, recordedKey, reducedMotion]);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -121,13 +134,13 @@ export function DiagnosticScene({
     const cloud = buildDiagnosticCloud();
     const { count } = cloud;
 
-    const scene = new THREE.Scene();
-    const camera = new THREE.PerspectiveCamera(40, 1, 0.1, 100);
-    camera.position.set(0, 0, 3.9);
-
-    const positions = new Float32Array(cloud.sphere); // start at entry
+    const positions = new Float32Array(cloud.entry); // start unresolved
+    // The growing stage's targets depend on which topics are answered, so
+    // they are computed per frame — into this one buffer, owned for the
+    // lifetime of the scene rather than allocated inside the loop.
+    const scratch = new Float32Array(count * 3);
     // Larger than the hero cloud: this sits behind a form at lower
-    // opacity, and at 0.028 the layers read as dust rather than surfaces.
+    // opacity, and smaller points read as dust rather than a surface.
     const sizes = new Float32Array(count).fill(0.055);
     const emphasis = new Float32Array(count).fill(1);
 
@@ -144,17 +157,26 @@ export function DiagnosticScene({
       depthWrite: false,
       uniforms: {
         uInk: { value: new THREE.Color(dark ? 0xf4f4e7 : 0x1a1614) },
-        uAccent: { value: new THREE.Color(dark ? 0x8cafb8 : 0x1e3b2e) },
+        // MODUS green in light; lifted in dark so it stays distinguishable
+        // from the cream ink points.
+        uAccent: { value: new THREE.Color(dark ? 0x7aa37f : 0x1e3b2e) },
       },
     });
-    // Accent is MODUS green in light; in dark the green is lifted so it
-    // stays distinguishable from the cream ink points.
-    mat.uniforms.uAccent.value = new THREE.Color(dark ? 0x7aa37f : 0x1e3b2e);
 
     const points = new THREE.Points(geo, mat);
     const root = new THREE.Group();
     root.add(points);
+    const scene = new THREE.Scene();
     scene.add(root);
+
+    const camera = new THREE.PerspectiveCamera(40, 1, 0.1, 100);
+    /*
+     * Far enough back that the waiting shell is mostly IN frame. At 3.9 it
+     * fell outside the top and bottom of the canvas, so the not-yet-
+     * answered points read as scattered dust along the lower edge rather
+     * than as a shell of information around the picture being built.
+     */
+    camera.position.set(0, 0, 4.3);
 
     function resize() {
       const r = host!.getBoundingClientRect();
@@ -163,10 +185,9 @@ export function DiagnosticScene({
       camera.updateProjectionMatrix();
       renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
       renderer.setSize(r.width, r.height, false);
-      // Under reduced motion there is no frame loop to redraw into the
-      // new size, so a resize would otherwise leave the last render
-      // stretched or, if the host started at zero height, blank. The
-      // diagnostic resizes the layers band once it has measured it.
+      // Under reduced motion there is no frame loop to redraw into the new
+      // size, so a resize would otherwise leave the last render stretched
+      // or, if the host started at zero height, blank.
       renderStaticRef.current?.();
     }
     resize();
@@ -180,10 +201,10 @@ export function DiagnosticScene({
 
     function draw(dt: number) {
       const stage = stageRef.current;
-      const target = targetsFor(cloud, stage);
+      const target = targetsFor(cloud, stage, scratch);
       // Exponential approach: a new stage supersedes the previous one
-      // immediately and continues from the CURRENT displayed positions,
-      // so rapid back-and-forth never queues or lags.
+      // immediately and continues from the CURRENT displayed positions, so
+      // rapid back-and-forth never queues or lags.
       const k = reducedMotion ? 1 : 1 - Math.exp(-dt * 3.2);
 
       for (let i = 0; i < count * 3; i++) {
@@ -196,92 +217,13 @@ export function DiagnosticScene({
       geo.attributes.position.needsUpdate = true;
       geo.attributes.aEmphasis.needsUpdate = true;
 
-      positionLabels(stage);
-
-      // A slow drift only while the information is still unresolved; the
+      // A slow drift only while the picture is still incomplete; the
       // composed states are deliberately still.
       if (!reducedMotion) {
-        const settle = stage.kind === "sphere" ? 1 : 0.12;
+        const settle = stage.kind === "entry" ? 1 : 0.12;
         root.rotation.y += dt * 0.12 * settle;
       }
       renderer.render(scene, camera);
-    }
-
-    // --- projected topic labels ------------------------------------------
-    // HTML, positioned by projecting each layer's real centroid through the
-    // live camera — not texture text, which blurs, and not a fixed offset,
-    // which detaches the moment the scene rotates.
-    const labelEls = Array.from(
-      labelLayerRef.current?.querySelectorAll<HTMLElement>("[data-layer]") ?? []
-    );
-    const centroid = new THREE.Vector3();
-    // Reused for per-point projection while finding a layer's right edge.
-    const point = new THREE.Vector3();
-
-    function positionLabels(stage: DiagnosticStage) {
-      if (!labelEls.length) return;
-      // Labels belong to the question stages. At entry nothing has been
-      // answered, so naming topics there would imply progress that has
-      // not happened; the composed states have the form's own headings.
-      const show = stage.kind === "layers";
-      const w = canvas!.clientWidth;
-      const h = canvas!.clientHeight;
-
-      for (const el of labelEls) {
-        const layer = Number(el.dataset.layer);
-        if (!show) {
-          el.style.opacity = "0";
-          continue;
-        }
-        /*
-         * Each label is placed against ITS OWN layer, just beyond that
-         * layer's rightmost point, with a short leader line back to it.
-         *
-         * They used to be pinned to the layer centroid as filled pills,
-         * which lined them up into what read as a vertical menu floating
-         * over the scene rather than annotation of it. Following each
-         * layer's own extent means they sit at different depths and
-         * different offsets, the way a label on a diagram does.
-         */
-        centroid.set(0, 0, 0);
-        let n = 0;
-        let rightmostX = -Infinity;
-        for (let i = 0; i < count; i++) {
-          if (cloud.layerOf[i] !== layer) continue;
-          centroid.x += positions[i * 3];
-          centroid.y += positions[i * 3 + 1];
-          centroid.z += positions[i * 3 + 2];
-          n++;
-          point.set(positions[i * 3], positions[i * 3 + 1], positions[i * 3 + 2]);
-          root.localToWorld(point);
-          point.project(camera);
-          if (point.x > rightmostX) rightmostX = point.x;
-        }
-        if (!n) continue;
-        centroid.divideScalar(n);
-        root.localToWorld(centroid);
-        centroid.project(camera);
-
-        // Behind the camera or outside the frame: suppress rather than
-        // pin a label to a point that is not really there.
-        if (centroid.z > 1 || Math.abs(centroid.y) > 1) {
-          el.style.opacity = "0";
-          continue;
-        }
-
-        const y = (-centroid.y * 0.5 + 0.5) * h;
-        const edgeX = (rightmostX * 0.5 + 0.5) * w;
-        // Keep the label inside the canvas; if its own layer reaches the
-        // right edge, tuck it back in rather than let it be clipped.
-        const x = Math.min(edgeX + 12, w - 8);
-        el.style.transform = `translate3d(${Math.round(x)}px, ${Math.round(y)}px, 0) translateY(-50%)`;
-
-        const active = stage.kind === "layers" && layer === stage.activeLayer;
-        // The topic being answered is legible; the rest are present but
-        // quiet, so the reader is never asked to parse six at once.
-        el.style.opacity = active ? "1" : "0.3";
-        el.dataset.active = active ? "true" : "false";
-      }
     }
 
     function frame(now: number) {
@@ -306,15 +248,15 @@ export function DiagnosticScene({
 
     if (reducedMotion) {
       // Static composition for the current stage: no morph, no drift.
-      // Points are placed directly on the stage's targets instead of
-      // being eased toward them.
+      // Points are placed directly on the stage's targets instead of being
+      // eased toward them, so every stage shows the same information a
+      // moving scene would.
       const renderStatic = () => {
         const stage = stageRef.current;
-        positions.set(targetsFor(cloud, stage));
+        positions.set(targetsFor(cloud, stage, scratch));
         for (let i = 0; i < count; i++) emphasis[i] = emphasisFor(cloud, stage, i);
         geo.attributes.position.needsUpdate = true;
         geo.attributes.aEmphasis.needsUpdate = true;
-        positionLabels(stage);
         renderer.render(scene, camera);
       };
       renderStatic();
@@ -328,52 +270,38 @@ export function DiagnosticScene({
         mat.dispose();
         renderer.dispose();
       };
-    } else {
-      const io = new IntersectionObserver(([e]) => {
-        visible = e.isIntersecting;
-        sync();
-      });
-      io.observe(host);
-      document.addEventListener("visibilitychange", sync);
-      return () => {
-        stop();
-        io.disconnect();
-        document.removeEventListener("visibilitychange", sync);
-        ro.disconnect();
-        geo.dispose();
-        mat.dispose();
-        renderer.dispose();
-      };
     }
-    // Both branches above return their own cleanup; there is no path to
-    // here.
-  }, [reducedMotion, theme, labels]);
+
+    const io = new IntersectionObserver(([e]) => {
+      visible = e.isIntersecting;
+      sync();
+    });
+    io.observe(host);
+    document.addEventListener("visibilitychange", sync);
+    return () => {
+      stop();
+      io.disconnect();
+      document.removeEventListener("visibilitychange", sync);
+      ro.disconnect();
+      geo.dispose();
+      mat.dispose();
+      renderer.dispose();
+    };
+    /*
+     * Deliberately NOT dependent on screen, step or `recorded`: those are
+     * read through `stageRef` inside the loop. A dependency on any of them
+     * would tear down the WebGL context and rebuild the cloud on every
+     * answer, which resets every point to the opening cloud and makes the
+     * stages read as unrelated illustrations instead of one object being
+     * organised.
+     */
+  }, [reducedMotion, theme]);
 
   return (
     <div ref={hostRef} className={`relative ${className}`}>
       <canvas ref={canvasRef} className="absolute inset-0 h-full w-full" aria-hidden="true" />
-
-      {/*
-       * Decorative duplicates of the form's own headings, so they are
-       * hidden from assistive technology — the question heading and the
-       * progress indicator are the accessible representation.
-       */}
-      <div ref={labelLayerRef} aria-hidden="true" className="pointer-events-none absolute inset-0">
-        {labels.map((label, i) => (
-          <span
-            key={label}
-            data-layer={i}
-            // An annotation, not a chip: no fill, no border, no backdrop.
-            // The leader line is the connection to the layer it names.
-            className="absolute left-0 top-0 flex items-center gap-1.5 whitespace-nowrap font-mono text-[10px] uppercase tracking-[0.12em] text-graphite opacity-0 transition-opacity duration-300 data-[active=true]:text-ink"
-          >
-            <span aria-hidden className="h-px w-3 bg-line-strong" />
-            {label}
-          </span>
-        ))}
-      </div>
-      {/* Non-WebGL fallback: a static layered mark, so the stage is still
-          communicated and the diagnostic stays completely usable. */}
+      {/* Non-WebGL fallback: a static mark, so the column is not simply
+          empty. Nothing is lost — the explanation beside it is HTML. */}
       <div
         ref={fallbackRef}
         hidden

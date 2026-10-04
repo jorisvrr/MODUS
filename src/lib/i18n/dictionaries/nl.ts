@@ -169,7 +169,6 @@ export const nl: Dictionary = {
 
   diagnosticShell: {
     label: "MODUS / Bedrijfsdiagnose",
-    hintPrefix: "Vervolg van",
     introTitle: "Laten we begrijpen hoe je bedrijf werkt.",
     introBody:
       "Beantwoord een paar vragen over je bedrijf, systemen en huidige knelpunten. MODUS gebruikt je antwoorden om een eerste bedrijfsprofiel op te bouwen en te bepalen waar verdere analyse waardevol kan zijn.",
@@ -189,7 +188,6 @@ export const nl: Dictionary = {
       "Wat is nu het belangrijkst?",
       "Waar moet MODUS je profiel naartoe sturen?",
     ],
-    stepTopics: ["Bedrijf", "Klanten", "Systemen", "Frictie", "Prioriteiten", "Contact"],
     profileReady: {
       label: "PROFIEL KLAAR",
       loading: "Je profiel wordt geladen…",
@@ -469,20 +467,96 @@ export const nl: Dictionary = {
     holdComplete: "Diagnose Ontvangen",
   },
 
-  diagnosticProfilePanel: {
-    label: "MODUS / Eerste Profiel",
-    emptyProfile: "Je profiel wordt hier opgebouwd terwijl je antwoordt.",
-    preliminarySignals: "Voorlopige Signalen",
-    emptySignals: "MODUS kijkt naar signalen terwijl je antwoordt.",
-    factIndustry: "Branche",
-    factTeam: "Team",
-    factLocations: "Vestigingen",
-    factSystems: "Systemen",
-    factSystemsIdentified: "geïdentificeerd",
-    factManualWork: "Handmatig Werk",
-    factPrimaryFriction: "Grootste Knelpunt",
-    factFriction: "Knelpunt",
-    factDependency: "Afhankelijkheid",
+  diagnosticGraphic: {
+    purposeLabel: "Waarom we dit vragen",
+    entryTitle: "Zes onderwerpen vormen \u00e9\u00e9n beeld.",
+    entryBody:
+      "MODUS leest een bedrijf als geheel, dus de vragen gaan ook over hoe klanten je bereiken en waarop je werkt \u2014 niet alleen over wat er misgaat. Elk onderwerp dat je beantwoordt tekent een deel van het beeld.",
+    topics: [
+      {
+        name: "Bedrijf",
+        purpose:
+          "Grootte, branche en vestigingen bepalen wat hier normaal is. Hetzelfde knelpunt betekent iets anders in een zaak met twee mensen dan in een bedrijf met vier vestigingen.",
+      },
+      {
+        name: "Klanten",
+        purpose:
+          "Hoe werk binnenkomt, en hoeveel ervan met de hand wordt verplaatst. Hier zit meestal de tijd die terug te winnen is.",
+      },
+      {
+        name: "Systemen",
+        purpose:
+          "Waarop je werkt, en of die tools met elkaar praten. Losse systemen zijn de gebruikelijke reden dat werk dubbel gebeurt.",
+      },
+      {
+        name: "Knelpunten",
+        purpose:
+          "Waar het werk zwaarder is dan het zou moeten zijn. Weten welk deel het meest schuurt voorkomt dat de eerste verbetering een gok is.",
+      },
+      {
+        name: "Prioriteiten",
+        purpose:
+          "Wat je anders wilt, en wanneer. Dit bepaalt de volgorde van het werk, niet of het kan.",
+      },
+      {
+        name: "Contact",
+        purpose:
+          "Waar je profiel naartoe moet. Er wordt niets verstuurd voordat je het verzendt.",
+      },
+    ],
+    recordedLabel: "Tot nu toe vastgelegd",
+    recordedCount: (filled: number, total: number) =>
+      `${filled} van ${total} onderwerpen vastgelegd`,
+    reviewLabel: "Het hele beeld",
+    reviewBody: "Gegroepeerd zoals MODUS het leest.",
+    groups: [
+      { name: "Je werk", body: "Wat het bedrijf is en hoe het draait." },
+      { name: "Wat in de weg zit", body: "De knelpunten die je aanwees." },
+      { name: "Wat eerst telt", body: "Wat je anders wilt, en wanneer." },
+    ],
+    groupRecorded: (n: number) =>
+      `${n} ${n === 1 ? "antwoord" : "antwoorden"} vastgelegd`,
+    submittingNote: "Versturen. Niets staat vast tot MODUS het heeft.",
+    savedLabel: "Vastgelegd",
+    savedTitle: "Je antwoorden staan bij MODUS.",
+    savedBody:
+      "Het beeld is compleet. Wat volgt is een eerste lezing daarvan, geen volledige diagnose.",
+    facts: {
+      company: "Bedrijf",
+      industry: "Branche",
+      team: "Team",
+      locations: "Vestigingen",
+      channels: "Klanten bereiken je via",
+      handling: "Aanvragen verwerkt",
+      manualWork: "Handmatig werk",
+      consistency: "Terugkerende taken",
+      coverage: "Overname bij afwezigheid",
+      systems: "Systemen",
+      systemsIdentified: "ge\u00efdentificeerd",
+      connected: "Verbonden",
+      spreadsheets: "Spreadsheets",
+      automation: "Automatisering",
+      friction: "Knelpunten",
+      primaryFriction: "Schuurt het meest",
+      frequency: "Frequentie",
+      impact: "Impact",
+      interest: "Ge\u00efnteresseerd in",
+      priorities: "Prioriteiten",
+      timing: "Timing",
+      role: "Rol",
+      sendTo: "Sturen naar",
+    },
+  },
+
+  diagnosticStartContext: {
+    label: "Je begon met",
+    note: "Meegenomen van de homepage. Pas het aan of wis het \u2014 het is nog geen antwoord op een vraag.",
+    textLabel: "Wat je zou willen verbeteren",
+    textPlaceholder: "Pas aan wat je schreef, of wis het",
+    removeTopic: "Verwijderen",
+    clear: "Dit wissen",
+    useAsDescription: "Gebruik dit als mijn beschrijving",
+    used: "Toegevoegd aan het veld hieronder.",
   },
 
   diagnosticProgress: {
@@ -563,10 +637,6 @@ export const nl: Dictionary = {
     },
   },
 
-  diagnosticSystemMap: {
-    businessLabel: "Bedrijf",
-    placeholderCategories: ["Operations", "Klanten", "Systemen", "Data", "Omzet", "Automatisering"],
-  },
 
   diagnosticWarpDetail: {
     label: "Signaal / Voorlopig",
@@ -799,9 +869,22 @@ export const nl: Dictionary = {
     },
     diagnosticEntry: {
       label: "Begin Hier",
-      heading: "Wat kan er beter?",
-      placeholder: "Vertel ons waar je bedrijf vastloopt…",
-      categories: ["Website", "Leads", "Processen", "Groei", "Nog niet zeker"],
+      heading: "Wat kost meer tijd dan het zou moeten?",
+      description:
+        "E\u00e9n regel is genoeg. Het bepaalt welke vragen de diagnostiek je hierna stelt.",
+      fieldLabel: "Wat zou je willen verbeteren?",
+      placeholder: "bijv. een offerte de deur uit krijgen duurt twee dagen",
+      chipsLabel: "Of kies wat er het dichtst bij komt",
+      categories: [
+        "Klanten opvolgen",
+        "Werk inplannen",
+        "Terugkerende administratie",
+        "Meer aanvragen krijgen",
+        "Nog niet zeker",
+      ],
+      exclusiveCategory: "Nog niet zeker",
+      cta: "Vind mijn volgende stap",
+      ctaNote: "Je hebt geen account nodig om te beginnen.",
     },
     process: {
       label: "De MODUS-cyclus",
