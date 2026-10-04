@@ -2771,3 +2771,65 @@ Verified through the real submit flow, three times:
 | absent | `null` | English (fallback) | Dutch |
 
 All six rows `PENDING`, none sent, all removed afterwards.
+
+## 43. Production migration prepared, not executed — 4 October 2026
+
+The full runbook is `MIGRATION-PLAN.md`. Nothing was run against
+production beyond read-only `SELECT`, `SHOW`, `information_schema` and
+`prisma migrate status`, which reads `_prisma_migrations` and writes
+nothing.
+
+Three migrations are unapplied: the operations rewrite from part 1, and
+the two from the mail work. Five nullable `TEXT` columns and one
+`NOT NULL` dropped. No `DROP TABLE`, `TRUNCATE`, `DELETE`, `UPDATE` or
+`INSERT` appears in any of them; nothing is backfilled.
+
+### What was actually tested, rather than reasoned about
+
+A Prisma client was generated from `origin/main`'s schema — the one the
+live build `d5ca41c` was compiled with — and run against the local
+database, which already has all three migrations applied. That is exactly
+the "schema ahead of code" state production sits in between migrating and
+deploying.
+
+Counts, reads, writes and outbox queries all pass: Prisma selects an
+explicit column list from its own schema, so columns it has never heard
+of are invisible to it. One operation fails, and it matters:
+
+```
+Error converting field "processStandardization" of expected
+non-nullable type "Int", found incompatible value of "null".
+```
+
+The old client cannot read a row where that column is NULL. **It does not
+block the migration** — production has 0 such rows and the column is still
+`NOT NULL` there, and only the *new* code ever writes one, when a visitor
+picks "Not sure / not applicable".
+
+It does set a constraint worth knowing before deploying: **the clean
+rollback window closes at the first submission that answers with the
+honest unknown.** After that, reverting to `d5ca41c` would break admin
+list reads. Roll forward, not back. One query says whether the window is
+still open.
+
+### Recovery
+
+WAL archiving is on and healthy — 56 segments archived, `archive_timeout`
+2 min, **0 failures, last failure never**. That is what PITR rests on.
+Whether PITR is *enabled* for this project and how far back it retains are
+Supabase plan settings, visible only in the dashboard; the plan says to
+confirm that before step 1 and to note the timestamp immediately before
+migrating. With 1 and 4 rows, a `pg_dump --data-only` of both tables is a
+cheap extra belt, and a column-drop undo is written out as well.
+
+### Carried forward unresolved
+
+The admin auth fault stays open: a 401 in 8 ms for a token issued one
+second earlier with valid claims, not reproducible in eight attempts.
+
+The one-time 401 retry added for it is proven not to weaken authorization
+(`e2e/adminRetrySafety.spec.ts`): a persistent 401 still fails after
+**exactly two** requests and renders nothing; a **403 is not retried at
+all**, because "authenticated, not an admin" is not transient; and both
+attempts pass through `requireAdminSession`, which re-reads the
+`AdminMember` row every time — an anonymous caller is refused twice over.
