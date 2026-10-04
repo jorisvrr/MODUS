@@ -265,6 +265,40 @@ model NotificationOutbox {
   /// MODUS for a customer confirmation. Never used as the From address.
   replyTo    String?
 
+  /// The provider's own id for the accepted message, read from the send
+  /// response. Without it a send cannot be looked up afterwards, which is
+  /// exactly the position the 4 October investigation was in: five
+  /// accepted sends and no way to ask the provider what became of any of
+  /// them. Null for rows accepted before this was recorded.
+  providerMessageId String?
+
+  /// What is actually KNOWN about delivery, as opposed to acceptance.
+  ///
+  ///   null        nothing known beyond the queue state
+  ///   ACCEPTED    the provider took it. Nothing more. This is what a
+  ///               2xx on send proves, and it is all it proves.
+  ///   DELIVERED   the receiving server accepted it — still not proof it
+  ///               reached an inbox rather than a quarantine or a spam
+  ///               folder.
+  ///   BOUNCED / COMPLAINED / SUPPRESSED
+  ///               the provider reported it did not, or will not, arrive.
+  ///
+  /// Only a provider event or a deliberate lookup may set anything beyond
+  /// ACCEPTED. The dispatcher must never write DELIVERED, because it does
+  /// not know.
+  deliveryState   String?
+  /// When `deliveryState` was last established.
+  deliveryStateAt DateTime?
+
+  /// The QUEUE state, and only that: PENDING, SENT, FAILED.
+  ///
+  /// `SENT` means the provider accepted the message and we stopped
+  /// retrying. It does NOT mean the message was delivered, and it
+  /// certainly does not mean it reached an inbox — a suppressed recipient
+  /// is accepted with a 2xx and then silently not delivered, which is how
+  /// five internal notifications could all read `SENT` while none arrived.
+  /// Confirmed delivery lives in `deliveryState`, which only provider
+  /// events can set.
   status     String @default("PENDING") // PENDING, SENT, FAILED
   attempts   Int    @default(0)
   lastError  String?

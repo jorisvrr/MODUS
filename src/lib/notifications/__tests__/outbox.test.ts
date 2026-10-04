@@ -14,6 +14,9 @@ type Row = {
   recipient: string;
   subject: string;
   body: string;
+  providerMessageId: string | null;
+  deliveryState: string | null;
+  deliveryStateAt: Date | null;
   html: string | null;
   replyTo: string | null;
   kind: string;
@@ -36,6 +39,9 @@ const prismaMock = {
       }
       const row = {
         id: `o${rows.length + 1}`,
+        providerMessageId: null,
+        deliveryState: null,
+        deliveryStateAt: null,
         html: null,
         replyTo: null,
         status: "PENDING",
@@ -68,10 +74,17 @@ const prismaMock = {
 
 vi.mock("@/lib/db", () => ({ prisma: prismaMock }));
 
-const sendMail = vi.fn();
+/*
+ * Typed as the real adapter now is: a send resolves to the provider's
+ * result, so a test that stubs it has to resolve to one too. The default
+ * is "accepted, no id", which is the shape a provider that returns an
+ * unreadable body produces.
+ */
+const sendMail =
+  vi.fn<(mail: unknown) => Promise<{ id: string | null }>>(async () => ({ id: null }));
 const isMailConfigured = vi.fn(() => true);
 vi.mock("../mailer", () => ({
-  sendMail: (...a: unknown[]) => sendMail(...a),
+  sendMail: (mail: unknown) => sendMail(mail),
   isMailConfigured: () => isMailConfigured(),
 }));
 
@@ -94,6 +107,10 @@ const notification = {
 beforeEach(() => {
   rows = [];
   sendMail.mockReset();
+  // `mockReset` clears the implementation too, so the default has to be
+  // restored here: without it every send resolves to `undefined` and the
+  // dispatcher sees a malformed result rather than a successful send.
+  sendMail.mockResolvedValue({ id: null });
   isMailConfigured.mockReturnValue(true);
 });
 
@@ -162,7 +179,7 @@ describe("retries never deliver twice", () => {
 
   it("sends once, then stops considering the row", async () => {
     await enqueueSubmissionNotification(notification);
-    sendMail.mockResolvedValue(undefined);
+    sendMail.mockResolvedValue({ id: null });
 
     const first = await dispatchPending();
     expect(first.sent).toBe(1);
@@ -178,7 +195,7 @@ describe("retries never deliver twice", () => {
 
   it("re-enqueueing after a successful send does not resurrect it", async () => {
     await enqueueSubmissionNotification(notification);
-    sendMail.mockResolvedValue(undefined);
+    sendMail.mockResolvedValue({ id: null });
     await dispatchPending();
 
     await enqueueSubmissionNotification(notification);
@@ -260,8 +277,9 @@ describe("a submission produces two independent mails", () => {
   it("a failing customer mail does NOT resend the internal notification", async () => {
     await enqueueDiagnosticEmails(base, "nl", ORIGIN);
     // The customer's provider rejects; MODUS's own address is fine.
-    sendMail.mockImplementation(async ({ to }: { to: string }) => {
-      if (to === base.email) throw new Error("mailbox full");
+    sendMail.mockImplementation(async (mail) => {
+      if ((mail as { to: string }).to === base.email) throw new Error("mailbox full");
+      return { id: null };
     });
 
     await dispatchPending();
@@ -313,5 +331,82 @@ describe("rows written before HTML mail existed still send", () => {
     expect(sent.text).toContain("Acme BV");
     expect(sent).not.toHaveProperty("html");
     expect(sent).not.toHaveProperty("replyTo");
+  });
+});
+
+
+describe("acceptance is recorded as acceptance, not as delivery", () => {
+  it("stores the provider's message id so the send can be looked up later", async () => {
+    sendMail.mockResolvedValue({ id: "re_abc123" });
+    await enqueueDiagnosticEmails(base, "nl", ORIGIN);
+    await dispatchPending();
+
+    for (const row of rows) {
+      expect(row.providerMessageId, `${row.kind} should carry the id`).toBe("re_abc123");
+    }
+  });
+
+  it('records ACCEPTED, never DELIVERED', () => {
+    /*
+     * The distinction this whole change exists for. A 2xx from the
+     * provider means it took the message. A suppressed recipient is
+     * accepted exactly the same way and then never delivered, which is how
+     * five notifications read as clean sends while none arrived.
+     */
+    return (async () => {
+      sendMail.mockResolvedValue({ id: "re_xyz" });
+      await enqueueDiagnosticEmails(base, "nl", ORIGIN);
+      await dispatchPending();
+      for (const row of rows) {
+        expect(row.status).toBe("SENT");
+        expect(row.deliveryState).toBe("ACCEPTED");
+        expect(row.deliveryState).not.toBe("DELIVERED");
+        expect(row.deliveryStateAt).toBeInstanceOf(Date);
+      }
+    })();
+  });
+
+  it("still succeeds when the provider returns no id", async () => {
+    // Losing the ability to look a message up is not a reason to treat an
+    // accepted message as failed.
+    sendMail.mockResolvedValue({ id: null });
+    await enqueueDiagnosticEmails(base, "nl", ORIGIN);
+    const result = await dispatchPending();
+
+    expect(result.sent).toBe(2);
+    for (const row of rows) {
+      expect(row.status).toBe("SENT");
+      expect(row.providerMessageId).toBeNull();
+      expect(row.deliveryState).toBe("ACCEPTED");
+    }
+  });
+
+  it("leaves a failed send with no id and no delivery claim", async () => {
+    sendMail.mockRejectedValue(new Error("provider is down"));
+    await enqueueDiagnosticEmails(base, "nl", ORIGIN);
+    await dispatchPending();
+
+    for (const row of rows) {
+      expect(row.status).toBe("PENDING");
+      expect(row.providerMessageId).toBeNull();
+      expect(row.deliveryState).toBeNull();
+    }
+  });
+
+  it("does not change retries or deduplication", async () => {
+    // The queue behaviour this is bolted onto must be exactly as before.
+    sendMail.mockResolvedValue({ id: "re_1" });
+    await enqueueDiagnosticEmails(base, "nl", ORIGIN);
+    await enqueueDiagnosticEmails(base, "nl", ORIGIN);
+    expect(rows).toHaveLength(2);
+
+    sendMail.mockReset();
+    sendMail.mockResolvedValue({ id: "re_2" });
+    sendMail.mockRejectedValueOnce(new Error("down"));
+    await dispatchPending();
+    const failed = rows.find((r) => r.status === "PENDING");
+    expect(failed, "a failure still schedules its own retry").toBeTruthy();
+    expect(failed!.nextAttemptAt).toBeInstanceOf(Date);
+    expect(failed!.attempts).toBe(1);
   });
 });

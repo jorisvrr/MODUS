@@ -202,7 +202,7 @@ export async function dispatchPending(limit = 20): Promise<{
 
   for (const row of due) {
     try {
-      await sendMail({
+      const result = await sendMail({
         to: row.recipient,
         subject: row.subject,
         text: row.body,
@@ -213,7 +213,25 @@ export async function dispatchPending(limit = 20): Promise<{
       });
       await prisma.notificationOutbox.update({
         where: { id: row.id },
-        data: { status: "SENT", sentAt: new Date(), attempts: row.attempts + 1, lastError: null },
+        data: {
+          // The QUEUE is done with this row: it was accepted, so stop
+          // retrying it.
+          status: "SENT",
+          sentAt: new Date(),
+          attempts: row.attempts + 1,
+          lastError: null,
+          // Tolerant of an adapter that returns nothing: an accepted
+          // message must never be recorded as failed just because its id
+          // could not be read.
+          providerMessageId: result?.id ?? null,
+          /*
+           * ACCEPTED, deliberately — never DELIVERED. The dispatcher has
+           * been told the provider took the message and nothing else. Only
+           * a provider event may claim more than that.
+           */
+          deliveryState: "ACCEPTED",
+          deliveryStateAt: new Date(),
+        },
       });
       sent++;
     } catch (error) {

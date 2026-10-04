@@ -3019,3 +3019,83 @@ The test record stays in place for manual inspection. No membership
 change, no second diagnostic, no forced resend, no other production
 mutation, and `verify-production.mjs` / `verify-admin-production.mjs` were
 not run.
+
+## 46. Provider message IDs, and acceptance vs delivery — 4 October 2026
+
+Prepared, **not migrated to production and not deployed**.
+
+### The gap this closes
+
+`sendMail` checked `response.ok` and threw the body away. The id Resend
+returns went with it, so five internal notifications recorded a clean send
+and there was no way to ask the provider what became of any of them. The
+investigation had to be done in a dashboard because our own data could not
+answer it.
+
+### What changed
+
+`sendMail` now returns `{ id: string | null }`, read from the response.
+A body with no id, an unreadable body, or a non-string id all return
+`null` — the message **was** accepted, and losing the handle to it is not
+a reason to treat an accepted send as failed. A non-2xx still throws, as
+before.
+
+The dispatcher stores `providerMessageId` and sets `deliveryState` to
+**`ACCEPTED`**, with `deliveryStateAt`. Three nullable columns, in a
+migration applied locally only.
+
+### Acceptance is not delivery, and the schema now says so
+
+`status` is documented as the **queue** state and nothing else. `SENT`
+means the provider accepted the message and we stopped retrying. It does
+not mean delivered, and it certainly does not mean an inbox — a suppressed
+recipient is accepted with a 2xx and then silently dropped, which is
+exactly how five notifications read as clean sends while none arrived.
+
+`deliveryState` carries what is actually known:
+
+| | |
+|---|---|
+| `null` | nothing known beyond the queue state |
+| `ACCEPTED` | the provider took it. All a 2xx proves |
+| `DELIVERED` | the receiving server accepted it — still not proof of inbox placement |
+| `BOUNCED` / `COMPLAINED` / `SUPPRESSED` | the provider reported it did not, or will not, arrive |
+
+**The dispatcher may never write `DELIVERED`**, because it does not know.
+Only a provider event or a deliberate lookup may claim more than
+`ACCEPTED`. Asserted.
+
+Nothing is backfilled: rows accepted before this genuinely have no
+provider id and nothing is known about their delivery, and writing
+`ACCEPTED` into them retroactively would be inventing a fact we did not
+record.
+
+### Retries and deduplication are untouched
+
+Asserted directly: a failure still leaves the row `PENDING` with its own
+incremented attempt count and its own `nextAttemptAt`; re-enqueueing the
+same event still produces two rows and not four; a failing customer mail
+still cannot cause a second internal notification.
+
+### No idempotency key on the wire — now asserted
+
+`sendMail` sends no `Idempotency-Key` header and no `idempotency_key`
+field, and a test pins that. This is load-bearing for a deliberate
+re-send: with an idempotency key the provider would return the **original
+accepted message** instead of sending a new one — and the original is
+precisely the one that was dropped. Our duplicate protection is the
+outbox's own `dedupeKey`, which is ours and which we can reason about.
+
+Nine new tests for the adapter, five for the dispatcher. 201 unit tests
+pass; lint unchanged from baseline.
+
+### Suppression: now evidenced, previously a hypothesis
+
+The suppression on `hello@withmodus.co` was found and removed. That moves
+it from "the pattern fits" to a confirmed cause of at least that address
+being dropped — and it also corrects my earlier DNS reasoning, which
+looked at the root domain when Resend sends from
+`notifications.withmodus.co`. That subdomain is correctly configured: DKIM
+present at `resend._domainkey.notifications.withmodus.co`, SPF on the
+`send.` bounce subdomain via `send.forge.rmta.net`, DMARC inheriting
+`p=none`. Authentication was never the problem.

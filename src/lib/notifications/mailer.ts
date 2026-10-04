@@ -42,7 +42,17 @@ export type OutgoingMail = {
   replyTo?: string;
 };
 
-export async function sendMail(mail: OutgoingMail): Promise<void> {
+/**
+ * What the provider said when it took the message.
+ *
+ * `id` is the provider's own handle for it, and the only way to ask later
+ * what became of it. `null` when the response carried none — the send
+ * still succeeded, we simply cannot look it up, which is the situation
+ * this return value exists to stop happening again.
+ */
+export type SendResult = { id: string | null };
+
+export async function sendMail(mail: OutgoingMail): Promise<SendResult> {
   const apiKey = process.env.RESEND_API_KEY;
   const from = process.env.MAIL_FROM;
   if (!apiKey || !from) throw new Error("Mail provider is not configured");
@@ -68,5 +78,25 @@ export async function sendMail(mail: OutgoingMail): Promise<void> {
 
   if (!response.ok) {
     throw new Error(`Mail provider rejected the message: ${response.status}`);
+  }
+
+  /*
+   * Read the id out of the response rather than discarding the body.
+   *
+   * A 2xx here means ACCEPTED and nothing more. Resend accepts a message
+   * for a suppressed recipient exactly like any other and then does not
+   * deliver it — which is how five internal notifications all recorded a
+   * clean send while none arrived. Keeping the id is what makes that
+   * answerable from the database instead of from a dashboard.
+   *
+   * A malformed or empty body is not a failure: the message was accepted.
+   * We lose the ability to look it up, which is worth logging and not
+   * worth throwing over.
+   */
+  try {
+    const body = (await response.json()) as { id?: unknown };
+    return { id: typeof body?.id === "string" ? body.id : null };
+  } catch {
+    return { id: null };
   }
 }
