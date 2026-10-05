@@ -3181,3 +3181,114 @@ PostgREST with the anon or publishable key — an automation, a no-code
 tool, a dashboard. Nothing in this codebase does: `src/lib/supabase/
 client.ts` has no importers and every access goes through Prisma as the
 owner. What exists outside it, I cannot see.
+
+## 48. Round 2 migrated and deployed — 5 October 2026
+
+**Deployed commit: `533fc4a`** (pushed `1ebf59e..533fc4a`, two commits).
+
+### Final checks before authorisation
+
+Nothing in the codebase reaches PostgREST: `src/lib/supabase/client.ts`
+has no importers, `createClient` appears nowhere else, and the
+`NEXT_PUBLIC_SUPABASE_*` variables are referenced only inside that file.
+
+`pg_stat_statements` showed 66 calls as `anon`/`authenticated`, which at
+first looked like contradicting traffic. Reading the statements settled
+it: they are the authorised RLS verification from 3 October — synthetic
+identities `user_alice`, `user_bob`, `user_admin` and probes such as
+`SELECT count(*) AS alice_sees FROM "Diagnostic"`. No application or
+external traffic. The access those verifiers use — `SELECT` on
+`Diagnostic` and `UPDATE("ownerId")` — is preserved by the new grants.
+
+### A deviation found, investigated, and benign
+
+The backup's restore test reported `NotificationOutbox = 10` and a
+surviving company of `wfwafw`, where the last recorded state was 6 rows
+and "Bagel ALley". Production had moved on since §45.
+
+Read-only investigation: two further submissions exist, at 18:56 and
+18:59 on 4 October, both to `jorisvrr@gmail.com`, each with its own pair
+of outbox rows — consistent with the inbox verification being carried out
+after the authorised test. The older records, including "Bagel ALley" and
+"MODUS — TEST", were deleted. Cumulative stats: inserts 11, deletes 10,
+live 1.
+
+**Who performed those deletions cannot be determined** — they happened
+before the audit trigger existed, which is precisely the gap this round
+closes. Everything else was healthy: all ten outbox rows `SENT`, nothing
+`PENDING` or `FAILED`, migrations still at 7.
+
+The deviation changes nothing about migration safety — all three are
+additive or privilege-only — so the sequence continued, with the expected
+row counts updated to the real baseline.
+
+The 18:59 submission also confirmed the October work running in
+production: `locale="en"`, `taskConsistency="Everyone has their own way."`
+deriving `processStandardization=1`, and
+`absenceCoverage="Yes, but they need some explanation."` deriving
+`keyEmployeeDependency="Medium"`.
+
+### Backup
+
+`/Users/joris/modus-backups/20261004-211511-round2`, mode 700, outside the repository: data dumps of both tables, a
+schema-only dump of `public`, the pre-migration `_prisma_migrations`, the
+**pre-migration grants** (35 lines, so the previous privilege state is
+recoverable), and both Prisma schema definitions. Restored into a scratch
+database and verified: zero schema errors, correct row counts, then
+dropped.
+
+### Applied, and verified
+
+`migrate deploy` applied exactly the three. Ten migrations now applied.
+
+| Check | Result |
+|---|---|
+| Three outbox columns | present, all nullable |
+| Backfill | **none** — every existing row still null |
+| TRUNCATE | held by **nobody** |
+| `anon` | holds **nothing, anywhere** |
+| `status`, `contextToken`, `pricingBand`, `calculatedEstimateMin` | not writable by `authenticated` |
+| `companyName`, `ownerId` | still writable — intended access preserved |
+| `SELECT` on Diagnostic | preserved, so the RLS verifiers still work |
+| `DiagnosticDeletion` | exists, 0 rows, RLS on, **no foreign key** |
+| Trigger | attached to `Diagnostic` |
+| Function | `SECURITY DEFINER` with `search_path` pinned |
+| Row counts | Diagnostic 1, Outbox 10 — unchanged by the migration |
+| Rollback window | `processStandardization IS NULL` = 0, still **open** |
+
+Resulting grants:
+
+```
+ActivityEvent   authenticated  SELECT
+Diagnostic      authenticated  DELETE, SELECT   (+ column-limited INSERT/UPDATE)
+Note            authenticated  DELETE, INSERT, SELECT, UPDATE
+Profile         authenticated  INSERT, SELECT   (+ column-limited UPDATE)
+```
+
+### The live build on the new schema, before deploying
+
+Ten public routes **200**, three protected routes **307**, two admin APIs
+**401**, header asset **200**. The old build was unaffected, in production
+and not only in the local reproduction.
+
+### After deploying
+
+Public routes **200**. Production read-only: 10 migrations, all outbox
+rows `SENT`, nothing `PENDING` or `FAILED`, `DiagnosticDeletion` empty,
+row counts unchanged.
+
+### Limitation: the deployed commit is not independently confirmed
+
+The push to `533fc4a` succeeded and Vercel deploys `main`, but **I could
+not verify from the running site which commit it is serving**. These two
+commits change only the mailer, the outbox, the delete route and the
+schema — none of which is observable without a submission or a deletion,
+both of which were out of scope. The markup exposes no build id and the
+static asset path is a fixed prefix, so before/after comparison
+distinguishes nothing.
+
+So `533fc4a` is reported on the strength of the push plus Vercel's
+auto-deploy, not on direct observation. The first real submission will
+confirm it by storing a `providerMessageId` and `deliveryState`; the first
+admin deletion will confirm it by writing a `DiagnosticDeletion` row with
+a Clerk actor. Neither was performed, as instructed.
